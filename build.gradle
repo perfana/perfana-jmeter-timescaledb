@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'maven-publish'
     id 'signing'
+    id 'io.github.gradle-nexus.publish-plugin' version '2.0.0'
 }
 
 group = 'io.perfana'
@@ -105,31 +106,23 @@ publishing {
         }
     }
 
+}
+
+nexusPublishing {
     repositories {
-        maven {
-            name = 'OSSRH'
-            def releasesRepoUrl = 'https://oss.sonatype.org/service/local/staging/deploy/maven2/'
-            def snapshotsRepoUrl = 'https://oss.sonatype.org/content/repositories/snapshots/'
-            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
-
-            credentials {
-                username = findProperty('ossrhUsername') ?: System.getenv('SONATYPE_USERNAME') ?: ''
-                password = findProperty('ossrhPassword') ?: System.getenv('SONATYPE_PASSWORD') ?: ''
-            }
-        }
+        sonatype()
     }
+    connectTimeout = java.time.Duration.ofMinutes(3)
+    clientTimeout = java.time.Duration.ofMinutes(3)
 }
 
-signing {
-    def signingKey = findProperty('signing.key') ?: System.getenv('GPG_SIGNING_KEY')
-    def signingPassword = findProperty('signing.password') ?: System.getenv('GPG_SIGNING_PASSWORD')
-    if (signingKey && signingPassword) {
+def hasSigningKey = project.hasProperty('signingKey')
+if (hasSigningKey) {
+    signing {
+        required { project.gradle.taskGraph.hasTask('publish') }
+        def signingKey = project.findProperty('signingKey')
+        def signingPassword = project.findProperty('signingPassword')
         useInMemoryPgpKeys(signingKey, signingPassword)
+        sign publishing.publications.mavenJava
     }
-    sign publishing.publications.mavenJava
-}
-
-// Only require signing for publish tasks
-tasks.withType(Sign).configureEach {
-    onlyIf { gradle.taskGraph.hasTask('publish') || gradle.taskGraph.hasTask('publishToMavenLocal') }
 }

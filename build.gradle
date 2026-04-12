@@ -1,0 +1,135 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'io.perfana'
+version = '1.0.0'
+description = 'Perfana JMeter TimescaleDB Backend Listener'
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    jmeterVersion = '5.6.3'
+    postgresqlVersion = '42.7.4'
+    hikariVersion = '5.1.0'
+    log4jVersion = '2.24.3'
+}
+
+dependencies {
+    // JMeter Dependencies
+    compileOnly "org.apache.jmeter:ApacheJMeter_core:${jmeterVersion}"
+    compileOnly "org.apache.jmeter:ApacheJMeter_http:${jmeterVersion}"
+
+    // PostgreSQL/TimescaleDB Dependencies
+    implementation "org.postgresql:postgresql:${postgresqlVersion}"
+    implementation "com.zaxxer:HikariCP:${hikariVersion}"
+
+    // Logging
+    compileOnly "org.apache.logging.log4j:log4j-api:${log4jVersion}"
+    compileOnly "org.apache.logging.log4j:log4j-core:${log4jVersion}"
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    withSourcesJar()
+    withJavadocJar()
+}
+
+jar {
+    archiveBaseName = 'perfana-jmeter-timescaledb'
+    manifest {
+        attributes(
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Perfana'
+        )
+    }
+}
+
+// Fat JAR for manual JMeter installation (GitHub Releases)
+tasks.register('fatJar', Jar) {
+    archiveBaseName = 'perfana-jmeter-timescaledb'
+    archiveClassifier = 'all'
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Perfana'
+        )
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = 'perfana-jmeter-timescaledb'
+            from components.java
+
+            pom {
+                name = 'Perfana JMeter TimescaleDB Backend Listener'
+                description = 'JMeter backend listener that writes test results to TimescaleDB for performance analysis'
+                url = 'https://github.com/perfana/perfana-jmeter-timescaledb'
+
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id = 'perfana'
+                        name = 'Perfana Team'
+                        organization = 'Perfana'
+                        organizationUrl = 'https://perfana.io'
+                    }
+                }
+
+                scm {
+                    connection = 'scm:git:git://github.com/perfana/perfana-jmeter-timescaledb.git'
+                    developerConnection = 'scm:git:ssh://github.com:perfana/perfana-jmeter-timescaledb.git'
+                    url = 'https://github.com/perfana/perfana-jmeter-timescaledb'
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = 'OSSRH'
+            def releasesRepoUrl = 'https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/'
+            def snapshotsRepoUrl = 'https://s01.oss.sonatype.org/content/repositories/snapshots/'
+            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+
+            credentials {
+                username = findProperty('ossrhUsername') ?: System.getenv('OSSRH_USERNAME') ?: ''
+                password = findProperty('ossrhPassword') ?: System.getenv('OSSRH_PASSWORD') ?: ''
+            }
+        }
+    }
+}
+
+signing {
+    def signingKey = findProperty('signing.key') ?: System.getenv('GPG_SIGNING_KEY')
+    def signingPassword = findProperty('signing.password') ?: System.getenv('GPG_SIGNING_PASSWORD')
+    if (signingKey && signingPassword) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+    }
+    sign publishing.publications.mavenJava
+}
+
+// Only require signing for publish tasks
+tasks.withType(Sign).configureEach {
+    onlyIf { gradle.taskGraph.hasTask('publish') || gradle.taskGraph.hasTask('publishToMavenLocal') }
+}

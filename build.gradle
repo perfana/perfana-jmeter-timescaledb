@@ -89,8 +89,8 @@ publishing {
 
                 developers {
                     developer {
-                        id = 'peterpaulbakker'
-                        name = 'Peter Paul Bakker'
+                        id = 'danielmoll'
+                        name = 'Daniel Moll'
                         organization = 'Perfana'
                         organizationUrl = 'https://perfana.io'
                     }
@@ -113,8 +113,8 @@ publishing {
             url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
 
             credentials {
-                username = findProperty('ossrhUsername') ?: System.getenv('OSSRH_USERNAME') ?: ''
-                password = findProperty('ossrhPassword') ?: System.getenv('OSSRH_PASSWORD') ?: ''
+                username = findProperty('ossrhUsername') ?: System.getenv('SONATYPE_USERNAME') ?: ''
+                password = findProperty('ossrhPassword') ?: System.getenv('SONATYPE_PASSWORD') ?: ''
             }
         }
     }

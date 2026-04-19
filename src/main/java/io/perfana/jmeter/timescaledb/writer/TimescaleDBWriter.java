@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -51,6 +52,13 @@ public class TimescaleDBWriter implements AutoCloseable {
     // LRU cache for URL patterns to avoid duplicate upserts
     private static final int URL_PATTERN_CACHE_SIZE = 10000;
     private final Set<String> knownUrlPatterns;
+
+    // Commit url_patterns in small groups instead of one transaction per flush.
+    // Rationale: with N JMeter instances running in parallel, concurrent inserts
+    // collide on the (url_hash, sut, env) PK. Even with ON CONFLICT DO NOTHING,
+    // each conflicting row takes a lock held until the other transaction commits.
+    // Smaller commit groups shorten the lock hold window dramatically.
+    private static final int URL_PATTERN_COMMIT_GROUP_SIZE = 50;
 
     // SQL statements
     private final String insertRequestRawSql;
@@ -93,15 +101,19 @@ public class TimescaleDBWriter implements AutoCloseable {
             return t;
         });
 
+        // Randomized initial delay so parallel JMeter instances don't align their
+        // first flushes - reduces url_patterns lock contention at test startup.
+        long flushIntervalMs = TimeUnit.SECONDS.toMillis(config.getFlushInterval());
+        long initialDelayMs = ThreadLocalRandom.current().nextLong(flushIntervalMs + 1);
         scheduler.scheduleAtFixedRate(
                 this::flushAllBuffers,
-                config.getFlushInterval(),
-                config.getFlushInterval(),
-                TimeUnit.SECONDS
+                initialDelayMs,
+                flushIntervalMs,
+                TimeUnit.MILLISECONDS
         );
 
-        LOGGER.info("TimescaleDBWriter initialized. Host: {}, Database: {}, Schema: {}",
-                config.getHost(), config.getDatabase(), config.getSchema());
+        LOGGER.info("TimescaleDBWriter initialized. Host: {}, Database: {}, Schema: {}, initialFlushDelayMs: {}",
+                config.getHost(), config.getDatabase(), config.getSchema(), initialDelayMs);
     }
 
     private HikariDataSource createDataSource() {
@@ -618,6 +630,7 @@ public class TimescaleDBWriter implements AutoCloseable {
 
             connection.setAutoCommit(false);
 
+            int inGroup = 0;
             for (UrlPatternRecord record : records) {
                 stmt.setString(1, record.getUrlHash());
                 stmt.setString(2, record.getSystemUnderTest());
@@ -626,10 +639,19 @@ public class TimescaleDBWriter implements AutoCloseable {
                 setNullableString(stmt, 5, record.getOriginalExample());
                 stmt.setTimestamp(6, Timestamp.from(record.getFirstSeen()));
                 stmt.addBatch();
+                inGroup++;
+
+                if (inGroup >= URL_PATTERN_COMMIT_GROUP_SIZE) {
+                    stmt.executeBatch();
+                    connection.commit();
+                    inGroup = 0;
+                }
             }
 
-            stmt.executeBatch();
-            connection.commit();
+            if (inGroup > 0) {
+                stmt.executeBatch();
+                connection.commit();
+            }
         }
     }
 

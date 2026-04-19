@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1] - 2026-04-19
+
+### Changed
+- `url_patterns` flushes now commit in groups of 50 rows instead of one transaction per flush, shortening PK row lock hold times when multiple JMeter instances run in parallel.
+- Periodic flush scheduler uses a randomized initial delay (0..`flushInterval`) so parallel JMeter instances don't align their first flushes at startup.
+
+### Docs
+- Added `docs/url-patterns-performance-notes.md` with follow-up recommendations for the Perfana API/worker repo (index drop, RLS review, app-side dedup, dedicated owner worker).
+
 ## [1.0.0] - 2026-04-12
 
 ### Added

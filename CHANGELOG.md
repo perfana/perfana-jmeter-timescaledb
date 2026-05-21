@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.2] - 2026-05-21
+
+### Added
+- `flattenNestedTransactions` config parameter (default `true`). When enabled, nested transaction-level results (e.g. Blazemeter Parallel Controller with `PARENT_SAMPLE=true` inside a Transaction Controller) are flattened: only the outermost transaction is written to the `transactions` table, and `requests_raw.transaction_name` always reflects the outermost Transaction Controller name. Set to `false` to restore the previous behaviour where every transaction-level result in the hierarchy was written separately.
+
 ## [1.0.1] - 2026-04-19
 
 ### Changed

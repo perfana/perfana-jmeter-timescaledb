@@ -44,6 +44,9 @@ public class TimescaleDBConfig {
     // URL normalization settings
     private boolean normalizeUrls;
 
+    // Transaction flattening settings
+    private boolean flattenNestedTransactions;
+
     // Configuration keys
     public static final String KEY_HOST = "timescaleDBHost";
     public static final String KEY_PORT = "timescaleDBPort";
@@ -65,6 +68,7 @@ public class TimescaleDBConfig {
     public static final String KEY_SCENARIO_NAME = "scenarioName";
     public static final String KEY_SAVE_RESPONSE_BODY = "saveResponseBody";
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
+    public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
 
     // Default values
     public static final String DEFAULT_HOST = "localhost";
@@ -87,6 +91,7 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_SCENARIO_NAME = "Scenario";
     public static final String DEFAULT_SAVE_RESPONSE_BODY = "true";
     public static final String DEFAULT_NORMALIZE_URLS = "true";
+    public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
 
     // Table names
     public static final String TABLE_REQUESTS_RAW = "requests_raw";
@@ -139,6 +144,9 @@ public class TimescaleDBConfig {
 
         // URL normalization settings
         config.normalizeUrls = Boolean.parseBoolean(context.getParameter(KEY_NORMALIZE_URLS, DEFAULT_NORMALIZE_URLS));
+
+        // Transaction flattening settings
+        config.flattenNestedTransactions = Boolean.parseBoolean(context.getParameter(KEY_FLATTEN_NESTED_TRANSACTIONS, DEFAULT_FLATTEN_NESTED_TRANSACTIONS));
 
         return config;
     }
@@ -253,5 +261,9 @@ public class TimescaleDBConfig {
 
     public boolean isNormalizeUrls() {
         return normalizeUrls;
+    }
+
+    public boolean isFlattenNestedTransactions() {
+        return flattenNestedTransactions;
     }
 }

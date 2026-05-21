@@ -22,18 +22,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.0'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.2'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.0.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.0.2-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Database Setup
 
@@ -96,8 +96,25 @@ io.perfana.jmeter.timescaledb.JMeterTimescaleDBBackendListenerClient
 | `syntheticMonitoring` | `false` | Enable synthetic monitoring mode |
 | `saveResponseBody` | `true` | Save response bodies for failed requests |
 | `normalizeUrls` | `true` | Enable URL normalization |
+| `flattenNestedTransactions` | `true` | Flatten nested parallel controllers into the outermost transaction (see below) |
 
 All parameters support JMeter property substitution: `${__P(propertyName,defaultValue)}`
+
+### Nested transactions and parallel controllers
+
+When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jmeter.controller.ParallelSampler`) with `PARENT_SAMPLE=true` inside a **Transaction Controller**, the result tree contains two nested transaction-level results: the outer Transaction Controller and the inner Parallel Controller.
+
+`flattenNestedTransactions=true` (default) resolves this cleanly:
+
+- **`transactions` table** — only the outermost Transaction Controller is written. The Parallel Controller aggregate is suppressed because it has a transaction ancestor.
+- **`requests_raw.transaction_name`** — always set to the outermost Transaction Controller name, regardless of how many parallel controller layers are between the sampler and the TC.
+
+`flattenNestedTransactions=false` preserves the raw JMeter result hierarchy:
+
+- **`transactions` table** — one row per transaction-level result, including each Parallel Controller group. This gives per-batch parallel timing but produces multiple rows per TC execution.
+- **`requests_raw.transaction_name`** — set to the nearest transaction ancestor, which is the Parallel Controller name rather than the outer TC name.
+
+The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
 ## Building from Source
 

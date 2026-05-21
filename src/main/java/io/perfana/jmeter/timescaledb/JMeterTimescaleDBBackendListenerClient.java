@@ -66,14 +66,21 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             );
         }
 
-        String responseMessage;
         SampleResult current = sampleResult;
+        String transactionLabel = null;
         while (current != null) {
-            responseMessage = current.getResponseMessage();
+            String responseMessage = current.getResponseMessage();
             if (responseMessage != null && responseMessage.startsWith(TRANSACTION_MESSAGE)) {
-                return new SampleNames(current.getSampleLabel(), sampleLabel);
+                transactionLabel = current.getSampleLabel();
+                if (!config.isFlattenNestedTransactions()) {
+                    break;
+                }
             }
             current = current.getParent();
+        }
+
+        if (transactionLabel != null) {
+            return new SampleNames(transactionLabel, sampleLabel);
         }
 
         // Standalone samplers (no transaction parent) - use label as both names
@@ -82,7 +89,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
     private void addAllSubResults(SampleResult sampleResult, List<SampleResult> samplerList, List<SampleResult> transactionList) {
         if (sampleResult.getResponseMessage() != null && sampleResult.getResponseMessage().startsWith(TRANSACTION_MESSAGE)) {
-            transactionList.add(sampleResult);
+            if (!config.isFlattenNestedTransactions() || !hasTransactionAncestor(sampleResult)) {
+                transactionList.add(sampleResult);
+            }
         } else if (sampleResult.getSubResults().length == 0) {
             samplerList.add(sampleResult);
         }
@@ -90,6 +99,18 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         for (SampleResult subResult : sampleResult.getSubResults()) {
             addAllSubResults(subResult, samplerList, transactionList);
         }
+    }
+
+    private boolean hasTransactionAncestor(SampleResult sampleResult) {
+        SampleResult parent = sampleResult.getParent();
+        while (parent != null) {
+            String msg = parent.getResponseMessage();
+            if (msg != null && msg.startsWith(TRANSACTION_MESSAGE)) {
+                return true;
+            }
+            parent = parent.getParent();
+        }
+        return false;
     }
 
     private String gatherHeaderString(SampleResult sampleResult) {
@@ -332,6 +353,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
         // URL normalization parameters
         arguments.addArgument(TimescaleDBConfig.KEY_NORMALIZE_URLS, "${__P(normalizeUrls," + TimescaleDBConfig.DEFAULT_NORMALIZE_URLS + ")}");
+
+        // Transaction flattening parameters
+        arguments.addArgument(TimescaleDBConfig.KEY_FLATTEN_NESTED_TRANSACTIONS, "${__P(flattenNestedTransactions," + TimescaleDBConfig.DEFAULT_FLATTEN_NESTED_TRANSACTIONS + ")}");
 
         return arguments;
     }

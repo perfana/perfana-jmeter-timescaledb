@@ -6,14 +6,18 @@ import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
 import io.perfana.jmeter.timescaledb.model.TransactionRecord;
 import io.perfana.jmeter.timescaledb.model.UrlPatternRecord;
 import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
+import io.perfana.jmeter.timescaledb.util.SessionVariableCarrier;
+import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
 import io.perfana.jmeter.timescaledb.util.UrlNormalizer;
 import io.perfana.jmeter.timescaledb.writer.TimescaleDBWriter;
 import org.apache.jmeter.assertions.AssertionResult;
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.protocol.http.sampler.HTTPSampleResult;
 import org.apache.jmeter.samplers.SampleResult;
+import org.apache.jmeter.threads.JMeterContext;
 import org.apache.jmeter.threads.JMeterContextService;
 import org.apache.jmeter.threads.JMeterContextService.ThreadCounts;
+import org.apache.jmeter.threads.JMeterVariables;
 import org.apache.jmeter.visualizers.backend.AbstractBackendListenerClient;
 import org.apache.jmeter.visualizers.backend.BackendListenerContext;
 import org.apache.logging.log4j.LogManager;
@@ -21,7 +25,11 @@ import org.apache.logging.log4j.Logger;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -45,6 +53,11 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     private TimescaleDBConfig config;
     private TimescaleDBWriter writer;
     private UrlNormalizer urlNormalizer;
+    private SessionVariableCarrier sessionVariableCarrier;
+
+    // Safety cap so snapshots from dropped phantom samples (never seen by the worker)
+    // cannot grow unbounded. Only failed samples ever populate the carrier.
+    private static final int SESSION_VARIABLE_CARRIER_MAX_ENTRIES = 10000;
 
     private static class SampleNames {
         final String transactionName;
@@ -87,17 +100,23 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         return new SampleNames(sampleLabel, sampleLabel);
     }
 
-    private void addAllSubResults(SampleResult sampleResult, List<SampleResult> samplerList, List<SampleResult> transactionList) {
+    private void addAllSubResults(SampleResult sampleResult, List<SampleResult> samplerList,
+                                  List<SampleResult> transactionList,
+                                  Map<String, String> snapshot,
+                                  Map<SampleResult, Map<String, String>> leafSnapshots) {
         if (sampleResult.getResponseMessage() != null && sampleResult.getResponseMessage().startsWith(TRANSACTION_MESSAGE)) {
             if (!config.isFlattenNestedTransactions() || !hasTransactionAncestor(sampleResult)) {
                 transactionList.add(sampleResult);
             }
         } else if (sampleResult.getSubResults().length == 0) {
             samplerList.add(sampleResult);
+            if (snapshot != null) {
+                leafSnapshots.put(sampleResult, snapshot);
+            }
         }
 
         for (SampleResult subResult : sampleResult.getSubResults()) {
-            addAllSubResults(subResult, samplerList, transactionList);
+            addAllSubResults(subResult, samplerList, transactionList, snapshot, leafSnapshots);
         }
     }
 
@@ -142,6 +161,49 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         return "";
     }
 
+    /**
+     * Runs on the sampler thread, where the live session variables are reachable. For failed
+     * samples (only), snapshots a filtered, immutable copy of the thread variables and stashes
+     * it keyed on the top-level result so the worker thread can attach it to the error record.
+     * Success path does no work (writeup R3).
+     */
+    @Override
+    public SampleResult createSampleResult(BackendListenerContext context, SampleResult result) {
+        if (config != null
+                && config.isSaveSessionVariables()
+                && writer != null
+                && writer.isSessionVariablesCaptureEnabled()
+                && !result.isSuccessful()
+                && !writer.isUnderPressure()) {
+            Map<String, String> snapshot = snapshotSessionVariables();
+            if (!snapshot.isEmpty()) {
+                sessionVariableCarrier.put(result, snapshot);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, String> snapshotSessionVariables() {
+        JMeterContext ctx = JMeterContextService.getContext();
+        if (ctx == null) {
+            return Collections.emptyMap();
+        }
+        JMeterVariables vars = ctx.getVariables();
+        if (vars == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> source = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : vars.entrySet()) {
+            Object value = entry.getValue();
+            source.put(entry.getKey(), value == null ? null : value.toString());
+        }
+        return SessionVariableFilter.filter(
+                source,
+                config.getSessionVariablesExclude(),
+                config.getSessionVariablesMaxValueLength(),
+                config.getSessionVariablesMaxTotalBytes());
+    }
+
     @Override
     public void handleSampleResults(List<SampleResult> sampleResults, BackendListenerContext context) {
         if (sampleResults == null || sampleResults.isEmpty()) {
@@ -151,8 +213,12 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         List<SampleResult> samplerList = new ArrayList<>();
         List<SampleResult> transactionList = new ArrayList<>();
 
+        Map<SampleResult, Map<String, String>> leafSnapshots = new IdentityHashMap<>();
         for (SampleResult sampleResult : sampleResults) {
-            addAllSubResults(sampleResult, samplerList, transactionList);
+            Map<String, String> snapshot = sessionVariableCarrier != null
+                    ? sessionVariableCarrier.removeAndGet(sampleResult)
+                    : null;
+            addAllSubResults(sampleResult, samplerList, transactionList, snapshot, leafSnapshots);
         }
 
         List<RequestRawRecord> requestRawRecords = new ArrayList<>();
@@ -248,6 +314,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                         .responseHeaders(reducedPayload ? null : sampleResult.getResponseHeaders())
                         .responseData(responseData)
                         .randomId(randomId)
+                        .sessionVariables(leafSnapshots.get(sampleResult))
                         .build();
 
                 requestErrorRecords.add(errorRecord);
@@ -357,6 +424,12 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         // Transaction flattening parameters
         arguments.addArgument(TimescaleDBConfig.KEY_FLATTEN_NESTED_TRANSACTIONS, "${__P(flattenNestedTransactions," + TimescaleDBConfig.DEFAULT_FLATTEN_NESTED_TRANSACTIONS + ")}");
 
+        // Session variable capture parameters
+        arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "${__P(saveSessionVariables," + TimescaleDBConfig.DEFAULT_SAVE_SESSION_VARIABLES + ")}");
+        arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_EXCLUDE, "${__P(sessionVariablesExclude," + TimescaleDBConfig.DEFAULT_SESSION_VARIABLES_EXCLUDE + ")}");
+        arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, "${__P(sessionVariablesMaxValueLength," + TimescaleDBConfig.DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH + ")}");
+        arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES, "${__P(sessionVariablesMaxTotalBytes," + TimescaleDBConfig.DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES + ")}");
+
         return arguments;
     }
 
@@ -367,6 +440,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
             // Parse configuration
             config = TimescaleDBConfig.fromContext(context);
+            sessionVariableCarrier = new SessionVariableCarrier(SESSION_VARIABLE_CARRIER_MAX_ENTRIES);
 
             // Initialize URL normalizer if enabled
             if (config.isNormalizeUrls()) {

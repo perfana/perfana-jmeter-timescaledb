@@ -116,6 +116,33 @@ When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jm
 
 The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
+### Session variable capture on errors
+
+When a sample fails, the listener can snapshot the failing virtual user's JMeter session variables and store them in `requests_error.session_variables` (a queryable `jsonb` column), so failures can be debugged with the session state that produced them.
+
+> ⚠️ **PII / secret exposure.** Session variables routinely hold emails, account ids, and correlation tokens. When enabled, these persist in TimescaleDB and its backups. Capture is **off by default** and gated by a deny-list — review the exposure for your environment before enabling.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `saveSessionVariables` | `false` | Master on/off switch. |
+| `sessionVariablesExclude` | `password,passwd,pwd,token,secret,authorization,auth,apikey,api_key,sessionid,jsessionid,cookie,credential,bearer` | Comma-separated variable names to skip (case-insensitive). Supplying your own value **replaces** this default list. |
+| `sessionVariablesMaxValueLength` | `2048` | Values longer than this (characters) are skipped entirely (not truncated). |
+| `sessionVariablesMaxTotalBytes` | `16384` | Once kept key+value bytes exceed this for a row, no further variables are added. |
+
+Notes:
+
+- Requires the `session_variables jsonb` column on `requests_error`. If the column is absent the listener logs a warning and disables capture for the run (it never fails inserts).
+- Capture is also skipped while the writer is under backpressure (same as response bodies).
+- Captured values reflect **end-of-sample** state (after post-processors/extractors).
+
+Query example:
+
+```sql
+SELECT time, sampler_name, session_variables->>'cartId' AS cart_id
+FROM requests_error
+WHERE session_variables->>'cartId' = '...';
+```
+
 ## Building from Source
 
 ```bash

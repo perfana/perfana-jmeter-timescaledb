@@ -171,8 +171,16 @@ public class TimescaleDBConfig {
         // Session variable capture settings
         config.saveSessionVariables = Boolean.parseBoolean(
                 context.getParameter(KEY_SAVE_SESSION_VARIABLES, DEFAULT_SAVE_SESSION_VARIABLES));
-        config.sessionVariablesExclude = parseDenyList(
-                context.getParameter(KEY_SESSION_VARIABLES_EXCLUDE, DEFAULT_SESSION_VARIABLES_EXCLUDE));
+        // Fall back to the secure built-in deny-list when the argument is blank (e.g. the
+        // GUI default uses ${__P(sessionVariablesExclude,)} and the property is unset). An
+        // empty deny-list would silently capture secret-named variables, so blank means
+        // "use the default", not "deny nothing".
+        String sessionVariablesExcludeRaw =
+                context.getParameter(KEY_SESSION_VARIABLES_EXCLUDE, DEFAULT_SESSION_VARIABLES_EXCLUDE);
+        if (sessionVariablesExcludeRaw == null || sessionVariablesExcludeRaw.trim().isEmpty()) {
+            sessionVariablesExcludeRaw = DEFAULT_SESSION_VARIABLES_EXCLUDE;
+        }
+        config.sessionVariablesExclude = parseDenyList(sessionVariablesExcludeRaw);
         config.sessionVariablesMaxValueLength = Integer.parseInt(
                 context.getParameter(KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH).trim());
         config.sessionVariablesMaxTotalBytes = Integer.parseInt(

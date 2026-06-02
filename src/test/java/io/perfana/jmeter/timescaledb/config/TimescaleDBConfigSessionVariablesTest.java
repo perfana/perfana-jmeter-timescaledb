@@ -42,4 +42,18 @@ class TimescaleDBConfigSessionVariablesTest {
         assertTrue(config.getSessionVariablesExclude().contains("baz"));
         assertFalse(config.getSessionVariablesExclude().contains("password"));
     }
+
+    @Test
+    void blankExcludeFallsBackToSecureDefault() {
+        // The GUI default is ${__P(sessionVariablesExclude,)}, which evaluates to "" when the
+        // property is unset. Blank must fall back to the built-in deny-list, not deny nothing.
+        Arguments args = new Arguments();
+        args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_EXCLUDE, "");
+
+        TimescaleDBConfig config = TimescaleDBConfig.fromContext(context(args));
+
+        assertTrue(config.getSessionVariablesExclude().contains("password"));
+        assertTrue(config.getSessionVariablesExclude().contains("jsessionid"));
+        assertTrue(config.getSessionVariablesExclude().contains("bearer"));
+    }
 }

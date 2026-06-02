@@ -125,7 +125,7 @@ When a sample fails, the listener can snapshot the failing virtual user's JMeter
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `saveSessionVariables` | `false` | Master on/off switch. |
-| `sessionVariablesExclude` | `password,passwd,pwd,token,secret,authorization,auth,apikey,api_key,sessionid,jsessionid,cookie,credential,bearer` | Comma-separated variable names to skip (case-insensitive). Supplying your own value **replaces** this default list. |
+| `sessionVariablesExclude` | `password,passwd,pwd,token,secret,authorization,auth,apikey,api_key,sessionid,jsessionid,cookie,credential,bearer` | Comma-separated variable names to skip (case-insensitive). Supplying your own value **replaces** this default list; leaving it blank keeps the secure default. Override via the `sessionVariablesExclude` JMeter property (e.g. `-JsessionVariablesExclude=foo,bar`). |
 | `sessionVariablesMaxValueLength` | `2048` | Values longer than this (characters) are skipped entirely (not truncated). |
 | `sessionVariablesMaxTotalBytes` | `16384` | Once kept key+value bytes exceed this for a row, no further variables are added. |
 

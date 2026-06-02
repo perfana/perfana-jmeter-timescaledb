@@ -2,6 +2,10 @@ package io.perfana.jmeter.timescaledb.config;
 
 import org.apache.jmeter.visualizers.backend.BackendListenerContext;
 
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+
 /**
  * Configuration class for TimescaleDB connection settings.
  * Supports JMeter property substitution via ${__P(propertyName,defaultValue)}.
@@ -47,6 +51,12 @@ public class TimescaleDBConfig {
     // Transaction flattening settings
     private boolean flattenNestedTransactions;
 
+    // Session variable capture settings
+    private boolean saveSessionVariables;
+    private Set<String> sessionVariablesExclude;
+    private int sessionVariablesMaxValueLength;
+    private int sessionVariablesMaxTotalBytes;
+
     // Configuration keys
     public static final String KEY_HOST = "timescaleDBHost";
     public static final String KEY_PORT = "timescaleDBPort";
@@ -69,6 +79,10 @@ public class TimescaleDBConfig {
     public static final String KEY_SAVE_RESPONSE_BODY = "saveResponseBody";
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
     public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
+    public static final String KEY_SAVE_SESSION_VARIABLES = "saveSessionVariables";
+    public static final String KEY_SESSION_VARIABLES_EXCLUDE = "sessionVariablesExclude";
+    public static final String KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH = "sessionVariablesMaxValueLength";
+    public static final String KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES = "sessionVariablesMaxTotalBytes";
 
     // Default values
     public static final String DEFAULT_HOST = "localhost";
@@ -92,6 +106,12 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_SAVE_RESPONSE_BODY = "true";
     public static final String DEFAULT_NORMALIZE_URLS = "true";
     public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
+    public static final String DEFAULT_SAVE_SESSION_VARIABLES = "false";
+    public static final String DEFAULT_SESSION_VARIABLES_EXCLUDE =
+            "password,passwd,pwd,token,secret,authorization,auth,apikey,api_key," +
+            "sessionid,jsessionid,cookie,credential,bearer";
+    public static final String DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH = "2048";
+    public static final String DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES = "16384";
 
     // Table names
     public static final String TABLE_REQUESTS_RAW = "requests_raw";
@@ -148,7 +168,39 @@ public class TimescaleDBConfig {
         // Transaction flattening settings
         config.flattenNestedTransactions = Boolean.parseBoolean(context.getParameter(KEY_FLATTEN_NESTED_TRANSACTIONS, DEFAULT_FLATTEN_NESTED_TRANSACTIONS));
 
+        // Session variable capture settings
+        config.saveSessionVariables = Boolean.parseBoolean(
+                context.getParameter(KEY_SAVE_SESSION_VARIABLES, DEFAULT_SAVE_SESSION_VARIABLES));
+        // Fall back to the secure built-in deny-list when the argument is blank (e.g. the
+        // GUI default uses ${__P(sessionVariablesExclude,)} and the property is unset). An
+        // empty deny-list would silently capture secret-named variables, so blank means
+        // "use the default", not "deny nothing".
+        String sessionVariablesExcludeRaw =
+                context.getParameter(KEY_SESSION_VARIABLES_EXCLUDE, DEFAULT_SESSION_VARIABLES_EXCLUDE);
+        if (sessionVariablesExcludeRaw == null || sessionVariablesExcludeRaw.trim().isEmpty()) {
+            sessionVariablesExcludeRaw = DEFAULT_SESSION_VARIABLES_EXCLUDE;
+        }
+        config.sessionVariablesExclude = parseDenyList(sessionVariablesExcludeRaw);
+        config.sessionVariablesMaxValueLength = Integer.parseInt(
+                context.getParameter(KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH).trim());
+        config.sessionVariablesMaxTotalBytes = Integer.parseInt(
+                context.getParameter(KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES, DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES).trim());
+
         return config;
+    }
+
+    private static Set<String> parseDenyList(String csv) {
+        Set<String> set = new HashSet<>();
+        if (csv == null) {
+            return set;
+        }
+        for (String name : csv.split(",")) {
+            String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                set.add(trimmed.toLowerCase(Locale.ROOT));
+            }
+        }
+        return set;
     }
 
     /**
@@ -265,5 +317,21 @@ public class TimescaleDBConfig {
 
     public boolean isFlattenNestedTransactions() {
         return flattenNestedTransactions;
+    }
+
+    public boolean isSaveSessionVariables() {
+        return saveSessionVariables;
+    }
+
+    public Set<String> getSessionVariablesExclude() {
+        return sessionVariablesExclude;
+    }
+
+    public int getSessionVariablesMaxValueLength() {
+        return sessionVariablesMaxValueLength;
+    }
+
+    public int getSessionVariablesMaxTotalBytes() {
+        return sessionVariablesMaxTotalBytes;
     }
 }

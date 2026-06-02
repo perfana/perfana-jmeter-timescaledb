@@ -8,11 +8,14 @@ import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
 import io.perfana.jmeter.timescaledb.model.TransactionRecord;
 import io.perfana.jmeter.timescaledb.model.UrlPatternRecord;
 import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
+import io.perfana.jmeter.timescaledb.util.SessionVariablesJson;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.postgresql.util.PGobject;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
@@ -70,6 +73,8 @@ public class TimescaleDBWriter implements AutoCloseable {
     private volatile boolean closed = false;
     private volatile boolean underPressure = false;
 
+    private final boolean sessionVariablesColumnPresent;
+
     public TimescaleDBWriter(TimescaleDBConfig config) {
         this.config = config;
         this.bufferLock = new ReentrantLock();
@@ -84,15 +89,26 @@ public class TimescaleDBWriter implements AutoCloseable {
         // Initialize LRU cache for URL patterns
         this.knownUrlPatterns = new LinkedHashSet<>(URL_PATTERN_CACHE_SIZE);
 
+        // Initialize connection pool (needed by the session_variables column probe below)
+        this.dataSource = createDataSource();
+
+        // Probe for the optional session_variables column. If capture is enabled but the
+        // column is missing (plugin deployed before the schema migration landed), disable
+        // it for this run rather than failing every error insert (writeup R1).
+        this.sessionVariablesColumnPresent =
+                config.isSaveSessionVariables() && probeSessionVariablesColumn();
+        if (config.isSaveSessionVariables() && !sessionVariablesColumnPresent) {
+            LOGGER.warn("saveSessionVariables is enabled but column {}.{}.session_variables is " +
+                    "absent; session variable capture is DISABLED for this run.",
+                    config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_ERROR);
+        }
+
         // Build insert SQL statements
         this.insertRequestRawSql = buildRequestRawInsertSql();
         this.insertTransactionSql = buildTransactionInsertSql();
         this.insertRequestErrorSql = buildRequestErrorInsertSql();
         this.insertVirtualUsersSql = buildVirtualUsersInsertSql();
         this.upsertUrlPatternSql = buildUrlPatternUpsertSql();
-
-        // Initialize connection pool
-        this.dataSource = createDataSource();
 
         // Start flush scheduler
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -157,12 +173,18 @@ public class TimescaleDBWriter implements AutoCloseable {
     }
 
     private String buildRequestErrorInsertSql() {
+        String columns = "time, test_run_id, system_under_test, test_environment, scenario_name, location, node_name, transaction_name, sampler_name, " +
+                "response_code, response_time, connection_time, url, url_hash, assertions, response_message, " +
+                "request_headers, response_headers, response_data, random_id";
+        String placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+        if (sessionVariablesColumnPresent) {
+            columns += ", session_variables";
+            placeholders += ", ?";
+        }
         return String.format(
-                "INSERT INTO %s (time, test_run_id, system_under_test, test_environment, scenario_name, location, node_name, transaction_name, sampler_name, " +
-                        "response_code, response_time, connection_time, url, url_hash, assertions, response_message, " +
-                        "request_headers, response_headers, response_data, random_id) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                config.getFullTableName(TimescaleDBConfig.TABLE_REQUESTS_ERROR)
+                "INSERT INTO %s (%s) VALUES (%s)",
+                config.getFullTableName(TimescaleDBConfig.TABLE_REQUESTS_ERROR),
+                columns, placeholders
         );
     }
 
@@ -575,6 +597,9 @@ public class TimescaleDBWriter implements AutoCloseable {
                 setNullableString(stmt, 18, record.getResponseHeaders());
                 setNullableString(stmt, 19, record.getResponseData());
                 setNullableInt(stmt, 20, record.getRandomId());
+                if (sessionVariablesColumnPresent) {
+                    setJsonb(stmt, 21, SessionVariablesJson.toJson(record.getSessionVariables()));
+                }
                 stmt.addBatch();
             }
 
@@ -616,6 +641,17 @@ public class TimescaleDBWriter implements AutoCloseable {
         }
     }
 
+    private void setJsonb(PreparedStatement stmt, int index, String json) throws SQLException {
+        if (json == null) {
+            stmt.setNull(index, Types.OTHER);
+        } else {
+            PGobject obj = new PGobject();
+            obj.setType("jsonb");
+            obj.setValue(json);
+            stmt.setObject(index, obj);
+        }
+    }
+
     private void setNullableInt(PreparedStatement stmt, int index, Integer value) throws SQLException {
         if (value != null) {
             stmt.setInt(index, value);
@@ -653,6 +689,31 @@ public class TimescaleDBWriter implements AutoCloseable {
                 connection.commit();
             }
         }
+    }
+
+    private boolean probeSessionVariablesColumn() {
+        String sql = "SELECT 1 FROM information_schema.columns " +
+                "WHERE table_schema = ? AND table_name = ? AND column_name = 'session_variables'";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, config.getSchema());
+            stmt.setString(2, TimescaleDBConfig.TABLE_REQUESTS_ERROR);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            LOGGER.warn("Could not probe for session_variables column ({}); capture disabled.",
+                    e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Whether session-variable capture is active for this run (master switch on AND
+     * the column exists). The listener checks this to skip snapshotting work entirely.
+     */
+    public boolean isSessionVariablesCaptureEnabled() {
+        return sessionVariablesColumnPresent;
     }
 
     /**

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.3] - 2026-06-02
+
+### Added
+- Session variable capture on errors. When a sample fails and `saveSessionVariables=true`, the listener snapshots the failing virtual user's JMeter session variables and stores them in a new `requests_error.session_variables` (`jsonb`) column, queryable per key (e.g. `session_variables->>'cartId'`). Off by default. New parameters: `saveSessionVariables`, `sessionVariablesExclude` (secret-name deny-list, case-insensitive, replaces the default when set), `sessionVariablesMaxValueLength`, `sessionVariablesMaxTotalBytes`. Capture is skipped under writer backpressure, and if the `session_variables` column is absent the listener logs a warning and disables capture for the run instead of failing inserts.
+- First test infrastructure for the project: JUnit 5 unit tests plus Testcontainers integration tests against a real TimescaleDB.
+
+### Notes
+- The `session_variables` column DDL is owned by the Perfana repo; `migrations/V003__add_session_variables.sql` here is a dev/test mirror. Apply the canonical migration to target environments before deploying this plugin.
+
 ## [1.0.2] - 2026-05-21
 
 ### Added

@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'io.perfana'
-version = '1.0.2'
+version = '1.0.3'
 description = 'Perfana JMeter TimescaleDB Backend Listener'
 
 repositories {
@@ -32,6 +32,16 @@ dependencies {
     // Logging
     compileOnly "org.apache.logging.log4j:log4j-api:${log4jVersion}"
     compileOnly "org.apache.logging.log4j:log4j-core:${log4jVersion}"
+
+    // Test dependencies
+    testImplementation "org.apache.jmeter:ApacheJMeter_core:${jmeterVersion}"
+    testImplementation "org.apache.jmeter:ApacheJMeter_http:${jmeterVersion}"
+    testImplementation "org.apache.logging.log4j:log4j-api:${log4jVersion}"
+    testImplementation "org.apache.logging.log4j:log4j-core:${log4jVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testImplementation 'org.testcontainers:postgresql:1.20.4'
+    testImplementation 'org.testcontainers:junit-jupiter:1.20.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 java {
@@ -39,6 +49,13 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
     withSourcesJar()
     withJavadocJar()
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+    }
 }
 
 jar {

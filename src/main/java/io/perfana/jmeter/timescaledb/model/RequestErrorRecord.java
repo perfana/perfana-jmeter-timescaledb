@@ -1,6 +1,7 @@
 package io.perfana.jmeter.timescaledb.model;
 
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * Data model for requests_error table.
@@ -26,6 +27,7 @@ public class RequestErrorRecord {
     private String responseHeaders;
     private String responseData;
     private Integer randomId;
+    private Map<String, String> sessionVariables;
 
     public static Builder builder() {
         return new Builder();
@@ -134,6 +136,11 @@ public class RequestErrorRecord {
             return this;
         }
 
+        public Builder sessionVariables(Map<String, String> sessionVariables) {
+            record.sessionVariables = sessionVariables;
+            return this;
+        }
+
         public RequestErrorRecord build() {
             return record;
         }
@@ -219,5 +226,9 @@ public class RequestErrorRecord {
 
     public Integer getRandomId() {
         return randomId;
+    }
+
+    public Map<String, String> getSessionVariables() {
+        return sessionVariables;
     }
 }

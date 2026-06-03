@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.4] - 2026-06-03
+
+### Changed
+- Session variable capture now always excludes JMeter's own built-in/internal variables, which carry no debugging value: the reserved `__`-prefixed namespace (e.g. `__jm__<ThreadGroup>__idx`, `__jmeter.U_T__`, `__jmv_SAME_USER`), `JMeterThread.*` thread state (e.g. `JMeterThread.pack`, `JMeterThread.last_sample_ok`), and the `START.MS`/`START.YMD`/`START.HMS`/`TESTSTART.MS` timestamps. This filter is independent of `sessionVariablesExclude`, so overriding the user deny-list never re-exposes the noise.
+
 ## [1.0.3] - 2026-06-02
 
 ### Added

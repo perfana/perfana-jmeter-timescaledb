@@ -22,18 +22,28 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.4</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.2'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.4'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.0.2-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.0.4-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+
+## Distribution
+
+This plugin is published to three channels:
+
+- **Maven Central** — `io.perfana:perfana-jmeter-timescaledb` (thin jar, for Maven/Gradle consumers)
+- **GitHub Releases** — fat jar (`-all.jar`) for manual `lib/ext` installation
+- **JMeter Plugins Manager** — descriptor in [`plugin-manager.json`](plugin-manager.json)
+
+See [`docs/PUBLISHING.md`](docs/PUBLISHING.md) for the release process and how to register/update the Plugins Manager entry.
 
 ## Database Setup
 

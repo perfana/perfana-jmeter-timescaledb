@@ -9,8 +9,8 @@ import java.util.Set;
 
 /**
  * Filters a raw session-variable map down to what is safe and bounded to persist:
- * drops deny-listed names (case-insensitive), skips oversized values, and stops
- * once the cumulative key+value byte budget is exceeded.
+ * drops JMeter-internal noise variables, drops deny-listed names (case-insensitive),
+ * skips oversized values, and stops once the cumulative key+value byte budget is exceeded.
  */
 public final class SessionVariableFilter {
 
@@ -44,6 +44,9 @@ public final class SessionVariableFilter {
             if (key == null || value == null) {
                 continue;
             }
+            if (isJMeterInternal(key)) {
+                continue;
+            }
             if (denyLowercase.contains(key.toLowerCase(Locale.ROOT))) {
                 continue;
             }
@@ -60,5 +63,30 @@ public final class SessionVariableFilter {
         }
 
         return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * Whether a variable name is a JMeter built-in / internal bookkeeping variable that
+     * carries no debugging value (timestamps, thread iteration indices, internal object
+     * references). Always excluded, independent of the user-configurable deny-list.
+     *
+     * <p>Covers the {@code __}-prefixed reserved namespace (e.g. {@code __jm__<TG>__idx},
+     * {@code __jmeter.U_T__}, {@code __jmv_SAME_USER}), the {@code JMeterThread.*} thread
+     * state (e.g. {@code JMeterThread.pack}, {@code JMeterThread.last_sample_ok}), and the
+     * fixed test-start timestamp variables.
+     */
+    private static boolean isJMeterInternal(String name) {
+        if (name.startsWith("__") || name.startsWith("JMeterThread.")) {
+            return true;
+        }
+        switch (name) {
+            case "START.MS":
+            case "START.YMD":
+            case "START.HMS":
+            case "TESTSTART.MS":
+                return true;
+            default:
+                return false;
+        }
     }
 }

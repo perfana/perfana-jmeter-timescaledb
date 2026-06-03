@@ -131,6 +131,7 @@ When a sample fails, the listener can snapshot the failing virtual user's JMeter
 
 Notes:
 
+- JMeter's own built-in/internal variables are **always excluded** (independent of `sessionVariablesExclude`): the reserved `__`-prefixed namespace (e.g. `__jm__<ThreadGroup>__idx`, `__jmeter.U_T__`), `JMeterThread.*` thread state (e.g. `JMeterThread.pack`, `JMeterThread.last_sample_ok`), and the `START.MS`/`START.YMD`/`START.HMS`/`TESTSTART.MS` timestamps. Only meaningful user/test variables are stored.
 - Requires the `session_variables jsonb` column on `requests_error`. If the column is absent the listener logs a warning and disables capture for the run (it never fails inserts).
 - Capture is also skipped while the writer is under backpressure (same as response bodies).
 - Captured values reflect **end-of-sample** state (after post-processors/extractors).

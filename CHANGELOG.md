@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.5] - 2026-07-08
+
+### Added
+- Test plans without Transaction Controllers now populate the `transactions` table: each leaf sampler with no Transaction Controller ancestor is recorded as its own single-step transaction, using the sampler name as the transaction name (matching `requests_raw.transaction_name`). This lets Perfana's Performance Analysis view show data for plans that group nothing under Transaction Controllers. Samplers nested under a Transaction Controller are unaffected — their enclosing TC still produces the transaction row, with no double-counting.
+
 ## [1.0.4] - 2026-06-03
 
 ### Changed

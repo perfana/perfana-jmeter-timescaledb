@@ -120,7 +120,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         }
     }
 
-    private boolean hasTransactionAncestor(SampleResult sampleResult) {
+    static boolean hasTransactionAncestor(SampleResult sampleResult) {
         SampleResult parent = sampleResult.getParent();
         while (parent != null) {
             String msg = parent.getResponseMessage();
@@ -288,6 +288,16 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
             requestRawRecords.add(rawRecord);
 
+            // Plans without Transaction Controllers still populate the transactions table:
+            // a leaf sampler with no Transaction Controller ancestor is recorded as its own
+            // single-step transaction. Samplers nested under a TC return null here (the TC
+            // already produced the transaction row).
+            TransactionRecord standaloneTransaction =
+                    standaloneTransactionRecord(sampleResult, names.transactionName, config);
+            if (standaloneTransaction != null) {
+                transactionRecords.add(standaloneTransaction);
+            }
+
             // Build request_error record if failed
             if (!sampleResult.isSuccessful()) {
                 boolean reducedPayload = writer.isUnderPressure();
@@ -380,8 +390,39 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         return "binary";
     }
 
-    private Integer toInt(long value) {
+    private static Integer toInt(long value) {
         return (int) value;
+    }
+
+    /**
+     * Builds a single-step transaction row for a standalone leaf sampler — one with no
+     * Transaction Controller ancestor — so test plans that use no Transaction Controllers
+     * still populate the transactions table (and thus the Performance Analysis view). The
+     * sampler name (as resolved by {@link #determineNames}) becomes the transaction name.
+     *
+     * <p>Returns {@code null} for samplers nested under a Transaction Controller: their
+     * enclosing TC already produces the transaction row, so emitting one here would
+     * double-count.
+     */
+    static TransactionRecord standaloneTransactionRecord(SampleResult sampler,
+                                                         String transactionName,
+                                                         TimescaleDBConfig config) {
+        if (hasTransactionAncestor(sampler)) {
+            return null;
+        }
+        return TransactionRecord.builder()
+                .time(Instant.ofEpochMilli(sampler.getEndTime()))
+                .testRunId(config.getEffectiveRunId())
+                .systemUnderTest(config.getSystemUnderTest())
+                .testEnvironment(config.getTestEnvironment())
+                .scenarioName(config.getScenarioName())
+                .location(config.getLocation())
+                .transactionName(transactionName)
+                .success(sampler.isSuccessful())
+                .requestSize(toInt(sampler.getSentBytes()))
+                .responseSize(toInt(sampler.getBytesAsLong()))
+                .responseTime(toInt(sampler.getTime()))
+                .build();
     }
 
     @Override

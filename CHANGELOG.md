@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.6] - 2026-07-21
+
+### Fixed
+- Child samplers under a Transaction Controller are no longer misrecorded as standalone transactions. The 1.0.5 standalone-sampler feature decided "is this a standalone sampler?" purely from JMeter's `SampleResult.getParent()` chain, which is not reliably intact in a BackendListener under load — so a leaf whose parent link to its Transaction Controller was dropped got fabricated into its own bogus single-step transaction (duplicating a real request). The listener now latches whether the run uses Transaction Controllers at all; once any TC sample is seen, unattributed leaves are treated as linkage failures and never turned into standalone transactions. Plans that genuinely use no Transaction Controllers are unaffected.
+
 ## [1.0.5] - 2026-07-08
 
 ### Added

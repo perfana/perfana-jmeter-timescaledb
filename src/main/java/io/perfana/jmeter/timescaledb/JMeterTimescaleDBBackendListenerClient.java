@@ -55,6 +55,14 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     private UrlNormalizer urlNormalizer;
     private SessionVariableCarrier sessionVariableCarrier;
 
+    // Latched true the first time any Transaction Controller sample is seen in this run.
+    // JMeter's SampleResult.getParent() chain from a leaf sampler back to its TC is not
+    // reliably intact in a BackendListener (breaks intermittently under load), so
+    // hasTransactionAncestor() alone can misjudge a TC child as standalone. Once we know the
+    // plan uses TCs at all, an "unattributed" leaf is a linkage failure, not a genuine
+    // standalone — so we never fabricate a single-step transaction for it. Never reset.
+    private volatile boolean planUsesTransactionControllers = false;
+
     // Safety cap so snapshots from dropped phantom samples (never seen by the worker)
     // cannot grow unbounded. Only failed samples ever populate the carrier.
     private static final int SESSION_VARIABLE_CARRIER_MAX_ENTRIES = 10000;
@@ -105,6 +113,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                                   Map<String, String> snapshot,
                                   Map<SampleResult, Map<String, String>> leafSnapshots) {
         if (sampleResult.getResponseMessage() != null && sampleResult.getResponseMessage().startsWith(TRANSACTION_MESSAGE)) {
+            planUsesTransactionControllers = true;
             if (!config.isFlattenNestedTransactions() || !hasTransactionAncestor(sampleResult)) {
                 transactionList.add(sampleResult);
             }
@@ -293,7 +302,8 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             // single-step transaction. Samplers nested under a TC return null here (the TC
             // already produced the transaction row).
             TransactionRecord standaloneTransaction =
-                    standaloneTransactionRecord(sampleResult, names.transactionName, config);
+                    standaloneTransactionRecord(sampleResult, names.transactionName, config,
+                            planUsesTransactionControllers);
             if (standaloneTransaction != null) {
                 transactionRecords.add(standaloneTransaction);
             }
@@ -403,11 +413,19 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
      * <p>Returns {@code null} for samplers nested under a Transaction Controller: their
      * enclosing TC already produces the transaction row, so emitting one here would
      * double-count.
+     *
+     * <p>Also returns {@code null} whenever {@code planUsesTransactionControllers} is true —
+     * i.e. this run has emitted at least one TC sample. In a plan that uses TCs, a leaf whose
+     * {@link #hasTransactionAncestor} walk comes up empty is almost always a broken
+     * {@code getParent()} chain (JMeter does not keep that chain intact in a BackendListener
+     * under load), not a genuine standalone sampler; fabricating a transaction for it produces
+     * bogus rows that duplicate real requests.
      */
     static TransactionRecord standaloneTransactionRecord(SampleResult sampler,
                                                          String transactionName,
-                                                         TimescaleDBConfig config) {
-        if (hasTransactionAncestor(sampler)) {
+                                                         TimescaleDBConfig config,
+                                                         boolean planUsesTransactionControllers) {
+        if (planUsesTransactionControllers || hasTransactionAncestor(sampler)) {
             return null;
         }
         return TransactionRecord.builder()

@@ -44,7 +44,7 @@ class StandaloneTransactionTest {
         SampleResult login = sampler("GET /login", 123, true);
 
         TransactionRecord record = JMeterTimescaleDBBackendListenerClient
-                .standaloneTransactionRecord(login, login.getSampleLabel(), config());
+                .standaloneTransactionRecord(login, login.getSampleLabel(), config(), false);
 
         assertNotNull(record, "a sampler with no Transaction Controller must produce a transaction row");
         assertEquals("GET /login", record.getTransactionName());
@@ -64,7 +64,7 @@ class StandaloneTransactionTest {
 
         long transactionRows = Arrays.stream(plan)
                 .map(s -> JMeterTimescaleDBBackendListenerClient
-                        .standaloneTransactionRecord(s, s.getSampleLabel(), config()))
+                        .standaloneTransactionRecord(s, s.getSampleLabel(), config(), false))
                 .filter(Objects::nonNull)
                 .count();
 
@@ -82,8 +82,25 @@ class StandaloneTransactionTest {
         child.setParent(tc);
 
         TransactionRecord record = JMeterTimescaleDBBackendListenerClient
-                .standaloneTransactionRecord(child, child.getSampleLabel(), config());
+                .standaloneTransactionRecord(child, child.getSampleLabel(), config(), false);
 
         assertNull(record, "a sampler nested under a Transaction Controller must not emit its own transaction row");
+    }
+
+    @Test
+    void samplerDetachedFromItsTransactionControllerIsNotFabricatedIntoATransaction() {
+        // Reproduces the MijnDoc-00002 leak: a plan that uses Transaction Controllers, but a
+        // child sampler reaches the listener with a broken getParent() chain (getParent() == null),
+        // so hasTransactionAncestor() wrongly reports "standalone". With planUsesTransactionControllers
+        // latched, we must not fabricate a transaction row for it.
+        SampleResult orphanChild = sampler("MijnDoc_05_Mijn_documenten_02_GET_/mijn-documenten", 40, true);
+        assertNull(orphanChild.getParent(), "test setup: parent chain is broken");
+
+        TransactionRecord record = JMeterTimescaleDBBackendListenerClient
+                .standaloneTransactionRecord(orphanChild, orphanChild.getSampleLabel(), config(), true);
+
+        assertNull(record,
+                "in a plan that uses Transaction Controllers, a child with a broken parent chain "
+                        + "must not be fabricated into its own transaction");
     }
 }

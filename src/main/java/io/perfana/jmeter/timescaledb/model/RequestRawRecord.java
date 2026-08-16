@@ -22,6 +22,7 @@ public class RequestRawRecord {
     private Integer responseLatency;
     private Integer responseTime;
     private String urlHash;
+    private String parentControllers;
 
     public static Builder builder() {
         return new Builder();
@@ -110,6 +111,15 @@ public class RequestRawRecord {
             return this;
         }
 
+        /**
+         * @param parentControllers JSON array of the controllers this sample ran under, outermost
+         *        first, or {@code null} when the engine does not tag samples
+         */
+        public Builder parentControllers(String parentControllers) {
+            record.parentControllers = parentControllers;
+            return this;
+        }
+
         public RequestRawRecord build() {
             return record;
         }
@@ -179,5 +189,9 @@ public class RequestRawRecord {
 
     public String getUrlHash() {
         return urlHash;
+    }
+
+    public String getParentControllers() {
+        return parentControllers;
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `requests_raw.parent_controllers` records the controllers a request ran under, outermost first, as a JSON array of `{name, class, iteration}` — the runtime ancestry of the sample. Until now a request row said what was called and inside which transaction, but nothing about the structure in between: which loop pass, which foreach element, which concurrent branch produced it. Transparent controllers make that unrecoverable afterwards, since a concurrently issued request arrives at the listener with the same transaction name and thread name as a sequential sibling.
+
+- The Parallel Controller entry additionally carries `"execution"`, an id shared by every request of one concurrent pass, so a consumer can measure how long the pass actually took (last finish minus first start) and report it as a distribution instead of approximating from per-request averages. It is separate from `iteration` because a parallel branch runs on cloned controllers whose own counts cannot identify the pass.
+
+### Notes
+- `iteration` counts from each controller's own base — a Loop Controller reports 1 on its first pass, a While/Transaction/Parallel Controller 0, and a controller that does not count reports -1 (the Thread Group always does). Group and compare values rather than assuming a base.
+- Requires a BreakTest build exposing `SampleResult.getParentControllerExecutions()` with `sampleresult.parent_controllers=true`. The whole tag is resolved reflectively, so stock Apache JMeter and older BreakTest engines keep working and simply write NULL.
+- The `parent_controllers` column DDL is owned by the Perfana repo; `migrations/V004__add_parent_controllers.sql` here is a dev/test mirror (see `docs/parent-controllers-schema-writeup.md`). If the column is absent the listener logs once and omits it from the insert rather than failing, so an un-migrated database is unaffected.
+
 ## [1.0.6] - 2026-07-21
 
 ### Fixed

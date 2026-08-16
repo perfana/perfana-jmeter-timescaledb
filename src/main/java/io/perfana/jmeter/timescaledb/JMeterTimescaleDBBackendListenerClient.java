@@ -6,6 +6,7 @@ import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
 import io.perfana.jmeter.timescaledb.model.TransactionRecord;
 import io.perfana.jmeter.timescaledb.model.UrlPatternRecord;
 import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
+import io.perfana.jmeter.timescaledb.util.ParentControllerTag;
 import io.perfana.jmeter.timescaledb.util.SessionVariableCarrier;
 import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
 import io.perfana.jmeter.timescaledb.util.UrlNormalizer;
@@ -293,6 +294,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                     .responseLatency(toInt(sampleResult.getLatency()))
                     .responseTime(toInt(sampleResult.getTime()))
                     .urlHash(urlHash)
+                    .parentControllers(ParentControllerTag.toJson(sampleResult))
                     .build();
 
             requestRawRecords.add(rawRecord);

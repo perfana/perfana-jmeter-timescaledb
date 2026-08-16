@@ -126,6 +126,33 @@ When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jm
 
 The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
+### Parent controllers (`requests_raw.parent_controllers`)
+
+Every request can also record the controllers it ran under, outermost first, with the pass each one was executing:
+
+```json
+[{"name":"Thread Group","class":"org.apache.jmeter.threads.ThreadGroup","iteration":-1},
+ {"name":"loop","class":"org.apache.jmeter.control.LoopController","iteration":2},
+ {"name":"checkout","class":"org.apache.jmeter.control.TransactionController","iteration":1},
+ {"name":"par","class":"org.apache.jmeter.control.ParallelController","iteration":1,
+  "execution":"Thread Group 1-3-par-1"}]
+```
+
+This is what tells a concurrent request from a sequential one, and which loop pass or foreach element produced it — none of which survives in the row otherwise. The Parallel Controller entry carries `execution`, shared by every request of one concurrent pass, so the pass's real elapsed time is measurable:
+
+```sql
+SELECT c->>'execution' AS pass,
+       max(time) - min(time) AS wall_time,
+       count(*) AS requests
+FROM requests_raw, jsonb_array_elements(parent_controllers) c
+WHERE c->>'class' = 'org.apache.jmeter.control.ParallelController'
+GROUP BY 1;
+```
+
+`iteration` counts from each controller's own base (a Loop Controller reports 1 on its first pass, most others 0) and is `-1` for a controller that does not count passes — group and compare values rather than assuming a base.
+
+Requirements: a BreakTest engine started with `-Jsampleresult.parent_controllers=true` (off by default), and the `parent_controllers` column on `requests_raw`. Without either, the column is simply left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
+
 ### Session variable capture on errors
 
 When a sample fails, the listener can snapshot the failing virtual user's JMeter session variables and store them in `requests_error.session_variables` (a queryable `jsonb` column), so failures can be debugged with the session state that produced them.

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - 2026-08-16
 
 ### Changed
 - **Breaking:** session variable capture is now opt-in per variable. `sessionVariablesExclude` (a deny-list of secret-ish names) is replaced by `sessionVariablesInclude`, an allow-list of the names to store — a variable nobody asked for is never persisted, so a session holding an unexpected token or personal detail cannot leak into the database by an omission. The allow-list supports `*` wildcards (`cartId,order_*,*Id`), matches case-insensitively, and must match the whole name.

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Breaking:** session variable capture is now opt-in per variable. `sessionVariablesExclude` (a deny-list of secret-ish names) is replaced by `sessionVariablesInclude`, an allow-list of the names to store — a variable nobody asked for is never persisted, so a session holding an unexpected token or personal detail cannot leak into the database by an omission. The allow-list supports `*` wildcards (`cartId,order_*,*Id`), matches case-insensitively, and must match the whole name.
+- `sessionVariablesInclude` defaults to empty, which captures nothing. A run with `saveSessionVariables=true` and no allow-list logs a warning at startup and skips snapshotting entirely.
+- Migration: replace `-JsessionVariablesExclude=…` with `-JsessionVariablesInclude=…` listing the variables worth debugging with. The old property is ignored. `*` restores capture-everything behaviour, minus JMeter internals — and minus the secret-name protection the deny-list used to give, so prefer explicit names.
+- JMeter's built-in/internal variables (`__*`, `JMeterThread.*`, `START.*`, `TESTSTART.MS`) are still always excluded, now even when a pattern matches them.
+
 ## [1.0.6] - 2026-07-21
 
 ### Fixed

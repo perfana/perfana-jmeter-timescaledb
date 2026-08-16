@@ -2,9 +2,10 @@ package io.perfana.jmeter.timescaledb.config;
 
 import org.apache.jmeter.visualizers.backend.BackendListenerContext;
 
-import java.util.HashSet;
-import java.util.Locale;
-import java.util.Set;
+import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
+
+import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Configuration class for TimescaleDB connection settings.
@@ -53,7 +54,7 @@ public class TimescaleDBConfig {
 
     // Session variable capture settings
     private boolean saveSessionVariables;
-    private Set<String> sessionVariablesExclude;
+    private List<Pattern> sessionVariablesInclude;
     private int sessionVariablesMaxValueLength;
     private int sessionVariablesMaxTotalBytes;
 
@@ -80,7 +81,7 @@ public class TimescaleDBConfig {
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
     public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
     public static final String KEY_SAVE_SESSION_VARIABLES = "saveSessionVariables";
-    public static final String KEY_SESSION_VARIABLES_EXCLUDE = "sessionVariablesExclude";
+    public static final String KEY_SESSION_VARIABLES_INCLUDE = "sessionVariablesInclude";
     public static final String KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH = "sessionVariablesMaxValueLength";
     public static final String KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES = "sessionVariablesMaxTotalBytes";
 
@@ -107,9 +108,8 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_NORMALIZE_URLS = "true";
     public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
     public static final String DEFAULT_SAVE_SESSION_VARIABLES = "false";
-    public static final String DEFAULT_SESSION_VARIABLES_EXCLUDE =
-            "password,passwd,pwd,token,secret,authorization,auth,apikey,api_key," +
-            "sessionid,jsessionid,cookie,credential,bearer";
+    /** Empty: capture is opt-in per variable, so an unconfigured run stores nothing. */
+    public static final String DEFAULT_SESSION_VARIABLES_INCLUDE = "";
     public static final String DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH = "2048";
     public static final String DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES = "16384";
 
@@ -171,36 +171,16 @@ public class TimescaleDBConfig {
         // Session variable capture settings
         config.saveSessionVariables = Boolean.parseBoolean(
                 context.getParameter(KEY_SAVE_SESSION_VARIABLES, DEFAULT_SAVE_SESSION_VARIABLES));
-        // Fall back to the secure built-in deny-list when the argument is blank (e.g. the
-        // GUI default uses ${__P(sessionVariablesExclude,)} and the property is unset). An
-        // empty deny-list would silently capture secret-named variables, so blank means
-        // "use the default", not "deny nothing".
-        String sessionVariablesExcludeRaw =
-                context.getParameter(KEY_SESSION_VARIABLES_EXCLUDE, DEFAULT_SESSION_VARIABLES_EXCLUDE);
-        if (sessionVariablesExcludeRaw == null || sessionVariablesExcludeRaw.trim().isEmpty()) {
-            sessionVariablesExcludeRaw = DEFAULT_SESSION_VARIABLES_EXCLUDE;
-        }
-        config.sessionVariablesExclude = parseDenyList(sessionVariablesExcludeRaw);
+        // Blank means "capture nothing": a variable is stored only when the test explicitly
+        // asks for its name, so a session holding an unexpected secret cannot leak by default.
+        config.sessionVariablesInclude = SessionVariableFilter.compilePatterns(
+                context.getParameter(KEY_SESSION_VARIABLES_INCLUDE, DEFAULT_SESSION_VARIABLES_INCLUDE));
         config.sessionVariablesMaxValueLength = Integer.parseInt(
                 context.getParameter(KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH).trim());
         config.sessionVariablesMaxTotalBytes = Integer.parseInt(
                 context.getParameter(KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES, DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES).trim());
 
         return config;
-    }
-
-    private static Set<String> parseDenyList(String csv) {
-        Set<String> set = new HashSet<>();
-        if (csv == null) {
-            return set;
-        }
-        for (String name : csv.split(",")) {
-            String trimmed = name.trim();
-            if (!trimmed.isEmpty()) {
-                set.add(trimmed.toLowerCase(Locale.ROOT));
-            }
-        }
-        return set;
     }
 
     /**
@@ -323,8 +303,9 @@ public class TimescaleDBConfig {
         return saveSessionVariables;
     }
 
-    public Set<String> getSessionVariablesExclude() {
-        return sessionVariablesExclude;
+    /** Allow-list matchers; empty means no session variable is captured. */
+    public List<Pattern> getSessionVariablesInclude() {
+        return sessionVariablesInclude;
     }
 
     public int getSessionVariablesMaxValueLength() {

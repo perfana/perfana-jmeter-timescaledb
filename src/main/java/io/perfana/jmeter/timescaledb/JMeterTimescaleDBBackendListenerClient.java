@@ -180,6 +180,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     public SampleResult createSampleResult(BackendListenerContext context, SampleResult result) {
         if (config != null
                 && config.isSaveSessionVariables()
+                && !config.getSessionVariablesInclude().isEmpty()
                 && writer != null
                 && writer.isSessionVariablesCaptureEnabled()
                 && sessionVariableCarrier != null
@@ -209,7 +210,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         }
         return SessionVariableFilter.filter(
                 source,
-                config.getSessionVariablesExclude(),
+                config.getSessionVariablesInclude(),
                 config.getSessionVariablesMaxValueLength(),
                 config.getSessionVariablesMaxTotalBytes());
     }
@@ -486,11 +487,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
         // Session variable capture parameters
         arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "${__P(saveSessionVariables," + TimescaleDBConfig.DEFAULT_SAVE_SESSION_VARIABLES + ")}");
-        // Empty __P default on purpose: the deny-list contains commas, which __P would parse
-        // as extra arguments and truncate to just the first token. Blank falls back to the
-        // secure built-in list in TimescaleDBConfig; set the sessionVariablesExclude property
-        // to override it wholesale.
-        arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_EXCLUDE, "${__P(sessionVariablesExclude,)}");
+        // Empty __P default on purpose: the allow-list contains commas, which __P would parse
+        // as extra arguments and truncate to just the first token. Blank captures nothing.
+        arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_INCLUDE, "${__P(sessionVariablesInclude,)}");
         arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, "${__P(sessionVariablesMaxValueLength," + TimescaleDBConfig.DEFAULT_SESSION_VARIABLES_MAX_VALUE_LENGTH + ")}");
         arguments.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES, "${__P(sessionVariablesMaxTotalBytes," + TimescaleDBConfig.DEFAULT_SESSION_VARIABLES_MAX_TOTAL_BYTES + ")}");
 
@@ -510,6 +509,13 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             if (config.isNormalizeUrls()) {
                 urlNormalizer = new UrlNormalizer();
                 log.info("URL normalization enabled");
+            }
+
+            if (config.isSaveSessionVariables() && config.getSessionVariablesInclude().isEmpty()) {
+                log.warn("saveSessionVariables is enabled but {} is empty; no session variables " +
+                        "will be captured. List the variable names to store, wildcards allowed " +
+                        "(e.g. -JsessionVariablesInclude=cartId,order*).",
+                        TimescaleDBConfig.KEY_SESSION_VARIABLES_INCLUDE);
             }
 
             // Initialize writer

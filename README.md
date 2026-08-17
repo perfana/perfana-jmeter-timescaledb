@@ -126,32 +126,38 @@ When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jm
 
 The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
-### Parent controllers (`requests_raw.parent_controllers`)
+### Test plan path (`requests_raw.source_element_path`)
 
-Every request can also record the controllers it ran under, outermost first, with the pass each one was executing:
+Every request can record where in the test plan it came from — the elements enclosing it, outermost first, from the Thread Group down to the sampler itself:
 
 ```json
-[{"name":"Thread Group","class":"org.apache.jmeter.threads.ThreadGroup","iteration":-1},
- {"name":"loop","class":"org.apache.jmeter.control.LoopController","iteration":2},
- {"name":"checkout","class":"org.apache.jmeter.control.TransactionController","iteration":1},
- {"name":"par","class":"org.apache.jmeter.control.ParallelController","iteration":1,
-  "execution":"Thread Group 1-3-par-1"}]
+[{"name":"Shoppers","class":"org.apache.jmeter.threads.ThreadGroup","occurrence":0},
+ {"name":"checkout","class":"org.apache.jmeter.control.TransactionController","occurrence":1},
+ {"name":"cart","class":"org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy","occurrence":0}]
 ```
 
-This is what tells a concurrent request from a sequential one, and which loop pass or foreach element produced it — none of which survives in the row otherwise. The Parallel Controller entry carries `execution`, shared by every request of one concurrent pass, so the pass's real elapsed time is measurable:
+`occurrence` numbers identically named siblings of the same class at that level, starting at 0 — so two `checkout` transactions in different branches of a plan stay distinguishable, which sampler and transaction names alone cannot do. `class` is the type discriminator; never infer the type from the name.
 
 ```sql
-SELECT c->>'execution' AS pass,
-       max(time) - min(time) AS wall_time,
-       count(*) AS requests
-FROM requests_raw, jsonb_array_elements(parent_controllers) c
-WHERE c->>'class' = 'org.apache.jmeter.control.ParallelController'
-GROUP BY 1;
+-- requests grouped by the branch of the plan that issued them
+SELECT (SELECT string_agg(e->>'name', ' > ' ORDER BY ord)
+          FROM jsonb_array_elements(r.source_element_path) WITH ORDINALITY AS t(e, ord)) AS plan_path,
+       count(*) AS requests,
+       round(avg(response_time)) AS avg_ms
+FROM requests_raw r
+WHERE test_run_id = $1
+GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-`iteration` counts from each controller's own base (a Loop Controller reports 1 on its first pass, most others 0) and is `-1` for a controller that does not count passes — group and compare values rather than assuming a base.
+```sql
+-- everything under one element, whatever its depth (GIN-indexable)
+SELECT * FROM requests_raw
+WHERE source_element_path @> '[{"name": "checkout", "occurrence": 1}]';
+```
 
-Requirements: a BreakTest engine started with `-Jsampleresult.parent_controllers=true` (off by default), and the `parent_controllers` column on `requests_raw`. Without either, the column is simply left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
+The path is **static**: it describes the plan, not the run. It does not say which loop pass or which concurrent execution produced a request.
+
+Requirements: a BreakTest engine that supports listener sample metadata, and the `source_element_path` column on `requests_raw`. The listener asks the engine for the path only when that column exists, so an un-migrated database costs the engine nothing. Without either, the column is left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
 
 ### Session variable capture on errors
 
@@ -201,6 +207,7 @@ Notes:
 - Requires the `session_variables jsonb` column on `requests_error`. If the column is absent the listener logs a warning and disables capture for the run (it never fails inserts).
 - Capture is also skipped while the writer is under backpressure (same as response bodies).
 - Captured values reflect **end-of-sample** state (after post-processors/extractors).
+- On a BreakTest engine with listener sample metadata the variables come from the engine, attached to the failing sub-result itself. On any other engine the listener snapshots them on the sampler thread and carries them to the worker. Either way, only failed samples are stored and only when capture is enabled.
 
 Query example:
 

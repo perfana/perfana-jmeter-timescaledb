@@ -2,7 +2,7 @@ package io.perfana.jmeter.timescaledb.writer;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import io.perfana.jmeter.timescaledb.util.ParentControllerTag;
+import io.perfana.jmeter.timescaledb.util.SampleMetadata;
 import io.perfana.jmeter.timescaledb.config.TimescaleDBConfig;
 import io.perfana.jmeter.timescaledb.model.RequestErrorRecord;
 import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
@@ -75,7 +75,7 @@ public class TimescaleDBWriter implements AutoCloseable {
     private volatile boolean underPressure = false;
 
     private final boolean sessionVariablesColumnPresent;
-    private final boolean parentControllersColumnPresent;
+    private final boolean sourceElementPathColumnPresent;
 
     public TimescaleDBWriter(TimescaleDBConfig config) {
         this.config = config;
@@ -105,16 +105,16 @@ public class TimescaleDBWriter implements AutoCloseable {
                     config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_ERROR);
         }
 
-        // Probe for the optional parent_controllers column the same way. A plugin running against a
-        // database that predates the migration keeps writing every other column rather than
+        // Probe for the optional source_element_path column the same way. A plugin running against
+        // a database that predates the migration keeps writing every other column rather than
         // failing every requests_raw insert.
-        this.parentControllersColumnPresent = probeColumn(TimescaleDBConfig.TABLE_REQUESTS_RAW, "parent_controllers");
-        if (!parentControllersColumnPresent) {
-            LOGGER.info("Column {}.{}.parent_controllers is absent; controller capture is disabled " +
+        this.sourceElementPathColumnPresent = probeColumn(TimescaleDBConfig.TABLE_REQUESTS_RAW, "source_element_path");
+        if (!sourceElementPathColumnPresent) {
+            LOGGER.info("Column {}.{}.source_element_path is absent; plan path capture is disabled " +
                     "for this run.", config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
-        } else if (!ParentControllerTag.isSupported()) {
-            LOGGER.info("Column {}.{}.parent_controllers exists but this engine does not tag samples " +
-                    "with their controllers; the column will be written empty.",
+        } else if (!SampleMetadata.isSourceElementPathSupported()) {
+            LOGGER.info("Column {}.{}.source_element_path exists but this engine does not attach the " +
+                    "path; the column will be written empty.",
                     config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
         }
 
@@ -173,8 +173,8 @@ public class TimescaleDBWriter implements AutoCloseable {
         String columns = "time, test_run_id, system_under_test, test_environment, scenario_name, location, transaction_name, sampler_name, success, " +
                 "request_size, response_size, response_code, response_connect_time, response_latency, response_time, url_hash";
         String placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
-        if (parentControllersColumnPresent) {
-            columns += ", parent_controllers";
+        if (sourceElementPathColumnPresent) {
+            columns += ", source_element_path";
             placeholders += ", ?";
         }
         return String.format(
@@ -557,8 +557,8 @@ public class TimescaleDBWriter implements AutoCloseable {
                 setNullableInt(stmt, 14, record.getResponseLatency());
                 setNullableInt(stmt, 15, record.getResponseTime());
                 setNullableString(stmt, 16, record.getUrlHash());
-                if (parentControllersColumnPresent) {
-                    setJsonb(stmt, 17, record.getParentControllers());
+                if (sourceElementPathColumnPresent) {
+                    setJsonb(stmt, 17, record.getSourceElementPath());
                 }
                 stmt.addBatch();
             }
@@ -750,11 +750,11 @@ public class TimescaleDBWriter implements AutoCloseable {
     }
 
     /**
-     * Whether the parent_controllers column is written for this run. False against a database that
+     * Whether the source_element_path column is written for this run. False against a database that
      * predates the migration, in which case the column is simply omitted from the insert.
      */
-    public boolean isParentControllersCaptureEnabled() {
-        return parentControllersColumnPresent;
+    public boolean isSourceElementPathCaptureEnabled() {
+        return sourceElementPathColumnPresent;
     }
 
     /**

@@ -28,12 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The parent_controllers column is optional: the plugin must write it as jsonb when the migration
+ * The source_element_path column is optional: the plugin must write it as jsonb when the migration
  * has been applied and stay silent when it has not, so an un-migrated database keeps recording
  * requests.
  */
 @Testcontainers
-class ParentControllersIntegrationTest {
+class SourceElementPathIntegrationTest {
 
     @Container
     static PostgreSQLContainer<?> db = new PostgreSQLContainer<>(
@@ -43,11 +43,13 @@ class ParentControllersIntegrationTest {
             .withUsername("jmeter")
             .withPassword("jmeter");
 
-    private static final String CHAIN_TEMPLATE =
-            "[{\"name\":\"Thread Group\",\"class\":\"org.apache.jmeter.threads.ThreadGroup\",\"iteration\":-1},"
-            + "{\"name\":\"loop\",\"class\":\"org.apache.jmeter.control.LoopController\",\"iteration\":%d},"
-            + "{\"name\":\"par\",\"class\":\"org.apache.jmeter.control.ParallelController\","
-            + "\"iteration\":%d,\"execution\":\"%s\"}]";
+    /** Two identically named transactions in different branches: occurrence is what tells them apart. */
+    private static final String PATH_TEMPLATE =
+            "[{\"name\":\"Shoppers\",\"class\":\"org.apache.jmeter.threads.ThreadGroup\",\"occurrence\":0},"
+            + "{\"name\":\"checkout\",\"class\":\"org.apache.jmeter.control.TransactionController\","
+            + "\"occurrence\":%d},"
+            + "{\"name\":\"%s\",\"class\":\"org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy\","
+            + "\"occurrence\":0}]";
 
     private TimescaleDBWriter writer;
 
@@ -71,7 +73,7 @@ class ParentControllersIntegrationTest {
             st.execute(readMigration("V002__add_url_normalization.sql"));
             st.execute(readMigration("V003__add_session_variables.sql"));
             if (includeV004) {
-                st.execute(readMigration("V004__add_parent_controllers.sql"));
+                st.execute(readMigration("V004__add_source_element_path.sql"));
             }
         }
     }
@@ -91,24 +93,23 @@ class ParentControllersIntegrationTest {
         return TimescaleDBConfig.fromContext(new BackendListenerContext(args));
     }
 
-    private RequestRawRecord rawRecord(String samplerName, String parentControllers) {
+    private RequestRawRecord rawRecord(String samplerName, String sourceElementPath) {
         return RequestRawRecord.builder()
                 .time(Instant.now())
                 .testRunId("run-1")
                 .systemUnderTest("sut")
                 .testEnvironment("test")
-                .transactionName("T01")
+                .transactionName("checkout")
                 .samplerName(samplerName)
                 .success(true)
                 .responseCode("200")
                 .responseTime(42)
-                .parentControllers(parentControllers)
+                .sourceElementPath(sourceElementPath)
                 .build();
     }
 
-    /** A sample inside a Parallel Controller on the given loop pass and parallel pass. */
-    private RequestRawRecord parallelRecord(String samplerName, int loopPass, String execution) {
-        return rawRecord(samplerName, String.format(CHAIN_TEMPLATE, loopPass, loopPass, execution));
+    private RequestRawRecord pathRecord(String samplerName, int transactionOccurrence) {
+        return rawRecord(samplerName, String.format(PATH_TEMPLATE, transactionOccurrence, samplerName));
     }
 
     private String query(String sql) throws Exception {
@@ -121,55 +122,48 @@ class ParentControllersIntegrationTest {
     }
 
     @Test
-    void storesTheChainAsQueryableJsonb() throws Exception {
+    void storesThePathAsQueryableJsonb() throws Exception {
         runMigrations(true);
         writer = new TimescaleDBWriter(config());
-        assertTrue(writer.isParentControllersCaptureEnabled());
+        assertTrue(writer.isSourceElementPathCaptureEnabled());
 
-        // The shape that is otherwise indistinguishable: both inside the same transaction.
         writer.writeAllRequestRaw(List.of(
-                parallelRecord("grouped", 1, "Thread Group 1-1-par-1"),
-                rawRecord("sequential", null)));
+                pathRecord("cart", 0),
+                rawRecord("untagged", null)));
         writer.flushAllBuffers();
 
-        // The UI's breadcrumb: names outermost first, with the pass each controller was on.
-        assertEquals("Thread Group -1 > loop 1 > par 1", query(
-                "SELECT string_agg(c->>'name' || ' ' || (c->>'iteration'), ' > ' ORDER BY ord) "
-                + "FROM requests_raw, jsonb_array_elements(parent_controllers) WITH ORDINALITY AS t(c, ord) "
-                + "WHERE sampler_name = 'grouped'"));
-        assertNull(query("SELECT parent_controllers FROM requests_raw WHERE sampler_name = 'sequential'"),
+        // The UI's breadcrumb: names outermost first.
+        assertEquals("Shoppers > checkout > cart", query(
+                "SELECT string_agg(e->>'name', ' > ' ORDER BY ord) "
+                + "FROM requests_raw, jsonb_array_elements(source_element_path) WITH ORDINALITY AS t(e, ord) "
+                + "WHERE sampler_name = 'cart'"));
+        assertNull(query("SELECT source_element_path FROM requests_raw WHERE sampler_name = 'untagged'"),
                 "An untagged request must be NULL, not an empty array");
     }
 
     @Test
-    void groupsTheRequestsOfOneConcurrentPass() throws Exception {
+    void tellsIdenticallyNamedTransactionsApartByOccurrence() throws Exception {
         runMigrations(true);
         writer = new TimescaleDBWriter(config());
 
-        writer.writeAllRequestRaw(List.of(
-                parallelRecord("one", 1, "user-1-par-1"),
-                parallelRecord("two", 1, "user-1-par-1"),
-                parallelRecord("one", 2, "user-1-par-2"),
-                parallelRecord("two", 2, "user-1-par-2")));
+        // Same transaction name, same sampler name, different place in the plan.
+        writer.writeAllRequestRaw(List.of(pathRecord("cart", 0), pathRecord("cart", 1)));
         writer.flushAllBuffers();
 
-        // Two passes, each shared by both of its requests: the shape a duration query needs.
-        assertEquals("2 4", query(
-                "SELECT count(DISTINCT c->>'execution') || ' ' || count(*) "
-                + "FROM requests_raw, jsonb_array_elements(parent_controllers) c "
-                + "WHERE c->>'class' = 'org.apache.jmeter.control.ParallelController'"));
+        assertEquals("2", query(
+                "SELECT count(DISTINCT e->>'occurrence')::text "
+                + "FROM requests_raw, jsonb_array_elements(source_element_path) e "
+                + "WHERE e->>'class' = 'org.apache.jmeter.control.TransactionController'"));
     }
 
     @Test
     void degradesGracefullyWhenColumnAbsent() throws Exception {
         runMigrations(false); // no V004 -> column missing, as on an un-migrated database
         writer = new TimescaleDBWriter(config());
-        assertFalse(writer.isParentControllersCaptureEnabled());
+        assertFalse(writer.isSourceElementPathCaptureEnabled());
 
         // The insert must still succeed with the column simply omitted.
-        writer.writeAllRequestRaw(List.of(
-                parallelRecord("grouped", 1, "user-1-par-1"),
-                rawRecord("sequential", null)));
+        writer.writeAllRequestRaw(List.of(pathRecord("cart", 0), rawRecord("untagged", null)));
         writer.flushAllBuffers();
 
         assertEquals("2", query("SELECT count(*)::text FROM requests_raw"),

@@ -37,7 +37,7 @@ public final class SessionVariablesJson {
         return sb.toString();
     }
 
-    /** Package-private so {@link ParentControllerTag} escapes strings the same way. */
+    /** Package-private so {@link SampleMetadata} escapes strings the same way. */
     static void appendString(StringBuilder sb, String s) {
         sb.append('"');
         for (int i = 0; i < s.length(); i++) {

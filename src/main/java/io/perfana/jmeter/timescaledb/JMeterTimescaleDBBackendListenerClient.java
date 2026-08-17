@@ -6,7 +6,7 @@ import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
 import io.perfana.jmeter.timescaledb.model.TransactionRecord;
 import io.perfana.jmeter.timescaledb.model.UrlPatternRecord;
 import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
-import io.perfana.jmeter.timescaledb.util.ParentControllerTag;
+import io.perfana.jmeter.timescaledb.util.SampleMetadata;
 import io.perfana.jmeter.timescaledb.util.SessionVariableCarrier;
 import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
 import io.perfana.jmeter.timescaledb.util.UrlNormalizer;
@@ -185,6 +185,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                 && writer != null
                 && writer.isSessionVariablesCaptureEnabled()
                 && sessionVariableCarrier != null
+                && !SampleMetadata.isJMeterVariablesSupported() // the engine attaches them itself
                 && !result.isSuccessful()
                 && !writer.isUnderPressure()) {
             Map<String, String> snapshot = snapshotSessionVariables();
@@ -193,6 +194,51 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             }
         }
         return result;
+    }
+
+    /**
+     * BreakTest asks every listener what metadata it needs before stamping it on each result
+     * ({@code SampleResultMetadataConsumer}), so nothing is prepared for a listener that does not
+     * use it. Deliberately not {@code @Override}: the plugin compiles against stock Apache JMeter,
+     * whose {@code BackendListenerClient} does not declare these methods. On an engine that does,
+     * the signatures match and the engine calls them. Both are answered after {@code setupTest},
+     * so they can depend on the parsed config and the probed columns.
+     *
+     * @return whether the engine should attach the thread variables to every result, which it is
+     *         only worth doing when this run actually stores session variables
+     */
+    public boolean needsJMeterVariables() {
+        return config != null
+                && config.isSaveSessionVariables()
+                && !config.getSessionVariablesInclude().isEmpty()
+                && writer != null
+                && writer.isSessionVariablesCaptureEnabled();
+    }
+
+    /**
+     * @return whether the engine should attach the test plan path, which is only worth doing when
+     *         the column to store it in exists
+     */
+    public boolean needsSourceTestElementPath() {
+        return writer != null && writer.isSourceElementPathCaptureEnabled();
+    }
+
+    /**
+     * The variables to store for a failing leaf: the engine's own snapshot when it attached one
+     * (it stamps every sub-result, so a leaf carries its own session state), otherwise the
+     * snapshot this listener took on the sampler thread and carried across.
+     */
+    private Map<String, String> sessionVariablesOf(SampleResult leaf,
+                                                   Map<SampleResult, Map<String, String>> carried) {
+        Map<String, String> engineVariables = SampleMetadata.jmeterVariables(leaf);
+        if (engineVariables.isEmpty()) {
+            return carried.get(leaf);
+        }
+        return SessionVariableFilter.filter(
+                engineVariables,
+                config.getSessionVariablesInclude(),
+                config.getSessionVariablesMaxValueLength(),
+                config.getSessionVariablesMaxTotalBytes());
     }
 
     private Map<String, String> snapshotSessionVariables() {
@@ -295,7 +341,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                     .responseLatency(toInt(sampleResult.getLatency()))
                     .responseTime(toInt(sampleResult.getTime()))
                     .urlHash(urlHash)
-                    .parentControllers(ParentControllerTag.toJson(sampleResult))
+                    .sourceElementPath(SampleMetadata.sourceElementPathJson(sampleResult))
                     .build();
 
             requestRawRecords.add(rawRecord);
@@ -338,7 +384,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                         .responseHeaders(reducedPayload ? null : sampleResult.getResponseHeaders())
                         .responseData(responseData)
                         .randomId(randomId)
-                        .sessionVariables(leafSnapshots.get(sampleResult))
+                        .sessionVariables(sessionVariablesOf(sampleResult, leafSnapshots))
                         .build();
 
                 requestErrorRecords.add(errorRecord);

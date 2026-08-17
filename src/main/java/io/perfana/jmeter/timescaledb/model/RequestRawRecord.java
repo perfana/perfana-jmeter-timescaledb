@@ -22,7 +22,7 @@ public class RequestRawRecord {
     private Integer responseLatency;
     private Integer responseTime;
     private String urlHash;
-    private String parentControllers;
+    private String sourceElementPath;
 
     public static Builder builder() {
         return new Builder();
@@ -112,11 +112,11 @@ public class RequestRawRecord {
         }
 
         /**
-         * @param parentControllers JSON array of the controllers this sample ran under, outermost
-         *        first, or {@code null} when the engine does not tag samples
+         * @param sourceElementPath JSON array of the test plan elements this sample came from,
+         *        outermost first, or {@code null} when the engine does not attach the path
          */
-        public Builder parentControllers(String parentControllers) {
-            record.parentControllers = parentControllers;
+        public Builder sourceElementPath(String sourceElementPath) {
+            record.sourceElementPath = sourceElementPath;
             return this;
         }
 
@@ -191,7 +191,7 @@ public class RequestRawRecord {
         return urlHash;
     }
 
-    public String getParentControllers() {
-        return parentControllers;
+    public String getSourceElementPath() {
+        return sourceElementPath;
     }
 }

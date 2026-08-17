@@ -157,18 +157,47 @@ Requirements: a BreakTest engine started with `-Jsampleresult.parent_controllers
 
 When a sample fails, the listener can snapshot the failing virtual user's JMeter session variables and store them in `requests_error.session_variables` (a queryable `jsonb` column), so failures can be debugged with the session state that produced them.
 
-> ⚠️ **PII / secret exposure.** Session variables routinely hold emails, account ids, and correlation tokens. When enabled, these persist in TimescaleDB and its backups. Capture is **off by default** and gated by a deny-list — review the exposure for your environment before enabling.
+> ⚠️ **PII / secret exposure.** Session variables routinely hold emails, account ids, and correlation tokens. Anything captured persists in TimescaleDB and its backups. Capture is **off by default** and **opt-in per variable**: only names you list are ever stored. Review what your listed names hold before enabling.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `saveSessionVariables` | `false` | Master on/off switch. |
-| `sessionVariablesExclude` | `password,passwd,pwd,token,secret,authorization,auth,apikey,api_key,sessionid,jsessionid,cookie,credential,bearer` | Comma-separated variable names to skip (case-insensitive). Supplying your own value **replaces** this default list; leaving it blank keeps the secure default. Override via the `sessionVariablesExclude` JMeter property (e.g. `-JsessionVariablesExclude=foo,bar`). |
+| `sessionVariablesInclude` | _(empty)_ | Comma-separated allow-list of the variable names to store (see below). Empty captures nothing. |
 | `sessionVariablesMaxValueLength` | `2048` | Values longer than this (characters) are skipped entirely (not truncated). |
 | `sessionVariablesMaxTotalBytes` | `16384` | Once kept key+value bytes exceed this for a row, no further variables are added. |
 
+#### Choosing what to capture
+
+Nothing is stored until you name it. `sessionVariablesInclude` takes a comma-separated list of variable names; `*` in a name matches any run of characters. Matching is case-insensitive and covers the **whole** name, so `cart` allows `cart` but not `cartId`.
+
+| Pattern | Matches | Does not match |
+|---------|---------|----------------|
+| `cartId` | `cartId`, `CARTID` | `cartIdExt`, `myCartId` |
+| `order_*` | `order_id`, `order_total` | `myorder_id` |
+| `*Id` | `userId`, `orderId` | `identity` |
+| `ship*_id_*` | `shipping_id_ext` | `shipping_id` |
+| `*` | every non-internal variable | — |
+
+Enable it for a run:
+
+```bash
+jmeter -n -t plan.jmx \
+  -JsaveSessionVariables=true \
+  -JsessionVariablesInclude=cartId,order_*,customerNumber
+```
+
+The same two values can be set as Backend Listener arguments in the JMX instead. Quote the list if your shell would split on the commas, and note that the value must not be passed through `${__P(...)}` with a default containing commas — JMeter parses those as extra function arguments.
+
+A failed sample then stores exactly those variables:
+
+```json
+{"cartId": "c-8841", "order_id": "9912", "order_total": "149.95", "customerNumber": "NL-4471"}
+```
+
 Notes:
 
-- JMeter's own built-in/internal variables are **always excluded** (independent of `sessionVariablesExclude`): the reserved `__`-prefixed namespace (e.g. `__jm__<ThreadGroup>__idx`, `__jmeter.U_T__`), `JMeterThread.*` thread state (e.g. `JMeterThread.pack`, `JMeterThread.last_sample_ok`), and the `START.MS`/`START.YMD`/`START.HMS`/`TESTSTART.MS` timestamps. Only meaningful user/test variables are stored.
+- JMeter's own built-in/internal variables are **always excluded**, even if a pattern matches them (so `*` gives you your test's variables without the engine's bookkeeping): the reserved `__`-prefixed namespace (e.g. `__jm__<ThreadGroup>__idx`, `__jmeter.U_T__`), `JMeterThread.*` thread state (e.g. `JMeterThread.pack`, `JMeterThread.last_sample_ok`), and the `START.MS`/`START.YMD`/`START.HMS`/`TESTSTART.MS` timestamps. Only meaningful user/test variables are stored.
+- `*` captures every non-internal variable, secrets included. There is no secret-name deny-list any more — the allow-list is the protection, so list names rather than reaching for `*` on a plan that handles credentials.
 - Requires the `session_variables jsonb` column on `requests_error`. If the column is absent the listener logs a warning and disables capture for the run (it never fails inserts).
 - Capture is also skipped while the writer is under backpressure (same as response bodies).
 - Captured values reflect **end-of-sample** state (after post-processors/extractors).

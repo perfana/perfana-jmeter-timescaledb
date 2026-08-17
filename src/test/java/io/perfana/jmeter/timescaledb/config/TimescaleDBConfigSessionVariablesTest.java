@@ -1,8 +1,11 @@
 package io.perfana.jmeter.timescaledb.config;
 
+import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.visualizers.backend.BackendListenerContext;
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,20 +18,20 @@ class TimescaleDBConfigSessionVariablesTest {
     }
 
     @Test
-    void defaultsDisableCaptureWithSecretDenyList() {
+    void defaultsDisableCaptureAndAllowNothing() {
         TimescaleDBConfig config = TimescaleDBConfig.fromContext(context(new Arguments()));
         assertFalse(config.isSaveSessionVariables());
         assertEquals(2048, config.getSessionVariablesMaxValueLength());
         assertEquals(16384, config.getSessionVariablesMaxTotalBytes());
-        assertTrue(config.getSessionVariablesExclude().contains("password"));
-        assertTrue(config.getSessionVariablesExclude().contains("jsessionid"));
+        assertTrue(config.getSessionVariablesInclude().isEmpty(),
+                "Capture is opt-in per variable: nothing is allowed until names are configured");
     }
 
     @Test
-    void parsesEnabledFlagAndCustomDenyList() {
+    void parsesEnabledFlagAndAllowList() {
         Arguments args = new Arguments();
         args.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "true");
-        args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_EXCLUDE, "Foo, BAR ,baz");
+        args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_INCLUDE, "Foo, BAR ,baz*");
         args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH, "10");
         args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_MAX_TOTAL_BYTES, "100");
 
@@ -37,23 +40,25 @@ class TimescaleDBConfigSessionVariablesTest {
         assertTrue(config.isSaveSessionVariables());
         assertEquals(10, config.getSessionVariablesMaxValueLength());
         assertEquals(100, config.getSessionVariablesMaxTotalBytes());
-        assertTrue(config.getSessionVariablesExclude().contains("foo"));
-        assertTrue(config.getSessionVariablesExclude().contains("bar"));
-        assertTrue(config.getSessionVariablesExclude().contains("baz"));
-        assertFalse(config.getSessionVariablesExclude().contains("password"));
+        assertEquals(3, config.getSessionVariablesInclude().size());
+
+        Map<String, String> kept = SessionVariableFilter.filter(
+                Map.of("foo", "1", "bar", "2", "bazinga", "3", "password", "4"),
+                config.getSessionVariablesInclude(), 2048, 16384);
+        assertEquals(3, kept.size());
+        assertFalse(kept.containsKey("password"));
     }
 
     @Test
-    void blankExcludeFallsBackToSecureDefault() {
-        // The GUI default is ${__P(sessionVariablesExclude,)}, which evaluates to "" when the
-        // property is unset. Blank must fall back to the built-in deny-list, not deny nothing.
+    void blankAllowListCapturesNothing() {
+        // The GUI default is ${__P(sessionVariablesInclude,)}, which evaluates to "" when the
+        // property is unset. Blank must mean "store nothing", never "store everything".
         Arguments args = new Arguments();
-        args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_EXCLUDE, "");
+        args.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "true");
+        args.addArgument(TimescaleDBConfig.KEY_SESSION_VARIABLES_INCLUDE, "");
 
         TimescaleDBConfig config = TimescaleDBConfig.fromContext(context(args));
 
-        assertTrue(config.getSessionVariablesExclude().contains("password"));
-        assertTrue(config.getSessionVariablesExclude().contains("jsessionid"));
-        assertTrue(config.getSessionVariablesExclude().contains("bearer"));
+        assertTrue(config.getSessionVariablesInclude().isEmpty());
     }
 }

@@ -12,6 +12,14 @@
 - Requires a BreakTest build exposing `SampleResult.getParentControllerExecutions()` with `sampleresult.parent_controllers=true`. The whole tag is resolved reflectively, so stock Apache JMeter and older BreakTest engines keep working and simply write NULL.
 - The `parent_controllers` column DDL is owned by the Perfana repo; `migrations/V004__add_parent_controllers.sql` here is a dev/test mirror (see `docs/parent-controllers-schema-writeup.md`). If the column is absent the listener logs once and omits it from the insert rather than failing, so an un-migrated database is unaffected.
 
+## [1.1.0] - 2026-08-16
+
+### Changed
+- **Breaking:** session variable capture is now opt-in per variable. `sessionVariablesExclude` (a deny-list of secret-ish names) is replaced by `sessionVariablesInclude`, an allow-list of the names to store — a variable nobody asked for is never persisted, so a session holding an unexpected token or personal detail cannot leak into the database by an omission. The allow-list supports `*` wildcards (`cartId,order_*,*Id`), matches case-insensitively, and must match the whole name.
+- `sessionVariablesInclude` defaults to empty, which captures nothing. A run with `saveSessionVariables=true` and no allow-list logs a warning at startup and skips snapshotting entirely.
+- Migration: replace `-JsessionVariablesExclude=…` with `-JsessionVariablesInclude=…` listing the variables worth debugging with. The old property is ignored. `*` restores capture-everything behaviour, minus JMeter internals — and minus the secret-name protection the deny-list used to give, so prefer explicit names.
+- JMeter's built-in/internal variables (`__*`, `JMeterThread.*`, `START.*`, `TESTSTART.MS`) are still always excluded, now even when a pattern matches them.
+
 ## [1.0.6] - 2026-07-21
 
 ### Fixed

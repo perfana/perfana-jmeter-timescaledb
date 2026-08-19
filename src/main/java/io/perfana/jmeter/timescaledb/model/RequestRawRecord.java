@@ -22,6 +22,7 @@ public class RequestRawRecord {
     private Integer responseLatency;
     private Integer responseTime;
     private String urlHash;
+    private String sourceElementPath;
 
     public static Builder builder() {
         return new Builder();
@@ -110,6 +111,15 @@ public class RequestRawRecord {
             return this;
         }
 
+        /**
+         * @param sourceElementPath JSON array of the test plan elements this sample came from,
+         *        outermost first, or {@code null} when the engine does not attach the path
+         */
+        public Builder sourceElementPath(String sourceElementPath) {
+            record.sourceElementPath = sourceElementPath;
+            return this;
+        }
+
         public RequestRawRecord build() {
             return record;
         }
@@ -179,5 +189,9 @@ public class RequestRawRecord {
 
     public String getUrlHash() {
         return urlHash;
+    }
+
+    public String getSourceElementPath() {
+        return sourceElementPath;
     }
 }

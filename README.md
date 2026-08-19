@@ -11,6 +11,14 @@ A JMeter backend listener plugin that writes test results directly to [Timescale
 - Two operating modes: standard load testing and synthetic monitoring
 - Virtual user tracking (standard mode)
 
+## Requirements
+
+| | |
+|---|---|
+| **Java** | **17 or newer** — the plugin's classes are compiled for Java 17, so the JVM running JMeter must be at least 17. An older JVM fails at class load with `UnsupportedClassVersionError`, even though JMeter itself still supports Java 8. |
+| **JMeter** | Apache JMeter 5.6.3 or a BreakTest build. Verified against stock 5.6.3: the plugin records everything it can and leaves engine-specific columns (`source_element_path`) `NULL`, logging the reason once at startup. |
+| **Database** | TimescaleDB (PostgreSQL). See [Database Setup](#database-setup). |
+
 ## Installation
 
 ### Maven/Gradle (recommended)
@@ -22,18 +30,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.0.5</version>
+    <version>1.2.0</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.5'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.2.0'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.0.5-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.2.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Distribution
 
@@ -126,6 +134,39 @@ When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jm
 
 The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
+### Test plan path (`requests_raw.source_element_path`)
+
+Every request can record where in the test plan it came from — the elements enclosing it, outermost first, from the Thread Group down to the sampler itself:
+
+```json
+[{"name":"Shoppers","class":"org.apache.jmeter.threads.ThreadGroup","occurrence":0},
+ {"name":"checkout","class":"org.apache.jmeter.control.TransactionController","occurrence":1},
+ {"name":"cart","class":"org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy","occurrence":0}]
+```
+
+`occurrence` numbers identically named siblings of the same class at that level, starting at 0 — so two `checkout` transactions in different branches of a plan stay distinguishable, which sampler and transaction names alone cannot do. `class` is the type discriminator; never infer the type from the name.
+
+```sql
+-- requests grouped by the branch of the plan that issued them
+SELECT (SELECT string_agg(e->>'name', ' > ' ORDER BY ord)
+          FROM jsonb_array_elements(r.source_element_path) WITH ORDINALITY AS t(e, ord)) AS plan_path,
+       count(*) AS requests,
+       round(avg(response_time)) AS avg_ms
+FROM requests_raw r
+WHERE test_run_id = $1
+GROUP BY 1 ORDER BY 2 DESC;
+```
+
+```sql
+-- everything under one element, whatever its depth (GIN-indexable)
+SELECT * FROM requests_raw
+WHERE source_element_path @> '[{"name": "checkout", "occurrence": 1}]';
+```
+
+The path is **static**: it describes the plan, not the run. It does not say which loop pass or which concurrent execution produced a request.
+
+Requirements: a BreakTest engine that supports listener sample metadata, and the `source_element_path` column on `requests_raw`. The listener asks the engine for the path only when that column exists, so an un-migrated database costs the engine nothing. Without either, the column is left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
+
 ### Session variable capture on errors
 
 When a sample fails, the listener can snapshot the failing virtual user's JMeter session variables and store them in `requests_error.session_variables` (a queryable `jsonb` column), so failures can be debugged with the session state that produced them.
@@ -174,6 +215,7 @@ Notes:
 - Requires the `session_variables jsonb` column on `requests_error`. If the column is absent the listener logs a warning and disables capture for the run (it never fails inserts).
 - Capture is also skipped while the writer is under backpressure (same as response bodies).
 - Captured values reflect **end-of-sample** state (after post-processors/extractors).
+- On a BreakTest engine with listener sample metadata the variables come from the engine, attached to the failing sub-result itself. On any other engine the listener snapshots them on the sampler thread and carries them to the worker. Either way, only failed samples are stored and only when capture is enabled.
 
 Query example:
 
@@ -196,7 +238,7 @@ WHERE session_variables->>'cartId' = '...';
 ./gradlew publishToMavenLocal
 ```
 
-Requires Java 17+.
+Building requires a Java 17+ JDK; see [Requirements](#requirements) for what running the plugin needs.
 
 ## TimescaleDB Tables
 

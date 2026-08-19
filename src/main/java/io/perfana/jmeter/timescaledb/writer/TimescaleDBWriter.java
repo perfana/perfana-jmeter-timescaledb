@@ -2,6 +2,7 @@ package io.perfana.jmeter.timescaledb.writer;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.perfana.jmeter.timescaledb.util.SampleMetadata;
 import io.perfana.jmeter.timescaledb.config.TimescaleDBConfig;
 import io.perfana.jmeter.timescaledb.model.RequestErrorRecord;
 import io.perfana.jmeter.timescaledb.model.RequestRawRecord;
@@ -74,6 +75,7 @@ public class TimescaleDBWriter implements AutoCloseable {
     private volatile boolean underPressure = false;
 
     private final boolean sessionVariablesColumnPresent;
+    private final boolean sourceElementPathColumnPresent;
 
     public TimescaleDBWriter(TimescaleDBConfig config) {
         this.config = config;
@@ -101,6 +103,19 @@ public class TimescaleDBWriter implements AutoCloseable {
             LOGGER.warn("saveSessionVariables is enabled but column {}.{}.session_variables is " +
                     "absent; session variable capture is DISABLED for this run.",
                     config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_ERROR);
+        }
+
+        // Probe for the optional source_element_path column the same way. A plugin running against
+        // a database that predates the migration keeps writing every other column rather than
+        // failing every requests_raw insert.
+        this.sourceElementPathColumnPresent = probeColumn(TimescaleDBConfig.TABLE_REQUESTS_RAW, "source_element_path");
+        if (!sourceElementPathColumnPresent) {
+            LOGGER.info("Column {}.{}.source_element_path is absent; plan path capture is disabled " +
+                    "for this run.", config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
+        } else if (!SampleMetadata.isSourceElementPathSupported()) {
+            LOGGER.info("Column {}.{}.source_element_path exists but this engine does not attach the " +
+                    "path; the column will be written empty.",
+                    config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
         }
 
         // Build insert SQL statements
@@ -155,11 +170,17 @@ public class TimescaleDBWriter implements AutoCloseable {
     }
 
     private String buildRequestRawInsertSql() {
+        String columns = "time, test_run_id, system_under_test, test_environment, scenario_name, location, transaction_name, sampler_name, success, " +
+                "request_size, response_size, response_code, response_connect_time, response_latency, response_time, url_hash";
+        String placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+        if (sourceElementPathColumnPresent) {
+            columns += ", source_element_path";
+            placeholders += ", ?";
+        }
         return String.format(
-                "INSERT INTO %s (time, test_run_id, system_under_test, test_environment, scenario_name, location, transaction_name, sampler_name, success, " +
-                        "request_size, response_size, response_code, response_connect_time, response_latency, response_time, url_hash) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                config.getFullTableName(TimescaleDBConfig.TABLE_REQUESTS_RAW)
+                "INSERT INTO %s (%s) VALUES (%s)",
+                config.getFullTableName(TimescaleDBConfig.TABLE_REQUESTS_RAW),
+                columns, placeholders
         );
     }
 
@@ -536,6 +557,9 @@ public class TimescaleDBWriter implements AutoCloseable {
                 setNullableInt(stmt, 14, record.getResponseLatency());
                 setNullableInt(stmt, 15, record.getResponseTime());
                 setNullableString(stmt, 16, record.getUrlHash());
+                if (sourceElementPathColumnPresent) {
+                    setJsonb(stmt, 17, record.getSourceElementPath());
+                }
                 stmt.addBatch();
             }
 
@@ -692,18 +716,27 @@ public class TimescaleDBWriter implements AutoCloseable {
     }
 
     private boolean probeSessionVariablesColumn() {
+        return probeColumn(TimescaleDBConfig.TABLE_REQUESTS_ERROR, "session_variables");
+    }
+
+    /**
+     * @return whether the column exists, {@code false} also when the probe itself fails, so an
+     *         optional column is skipped rather than breaking every insert
+     */
+    private boolean probeColumn(String table, String column) {
         String sql = "SELECT 1 FROM information_schema.columns " +
-                "WHERE table_schema = ? AND table_name = ? AND column_name = 'session_variables'";
+                "WHERE table_schema = ? AND table_name = ? AND column_name = ?";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, config.getSchema());
-            stmt.setString(2, TimescaleDBConfig.TABLE_REQUESTS_ERROR);
+            stmt.setString(2, table);
+            stmt.setString(3, column);
             try (ResultSet rs = stmt.executeQuery()) {
                 return rs.next();
             }
         } catch (SQLException e) {
-            LOGGER.warn("Could not probe for session_variables column ({}); capture disabled.",
-                    e.getMessage());
+            LOGGER.warn("Could not probe for {}.{} column ({}); treating it as absent.",
+                    table, column, e.getMessage());
             return false;
         }
     }
@@ -714,6 +747,14 @@ public class TimescaleDBWriter implements AutoCloseable {
      */
     public boolean isSessionVariablesCaptureEnabled() {
         return sessionVariablesColumnPresent;
+    }
+
+    /**
+     * Whether the source_element_path column is written for this run. False against a database that
+     * predates the migration, in which case the column is simply omitted from the insert.
+     */
+    public boolean isSourceElementPathCaptureEnabled() {
+        return sourceElementPathColumnPresent;
     }
 
     /**

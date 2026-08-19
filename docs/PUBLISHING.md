@@ -100,22 +100,40 @@ against libs other plugins already installed.
 ### Test the descriptor locally before the PR
 
 Point JMeter's Plugin Manager at your local descriptor and confirm it installs
-the right files:
+the right files.
+
+`jpgc.repo.address` must be an **HTTP(S)** URL — the Plugins Manager routes it
+through `JARSourceHTTP` and appends `?installID=...`, so `file://` is rejected
+(`ClientProtocolException: URI does not specify a valid host name`). Serve the
+descriptor over HTTP instead:
 
 ```bash
-# Serve the descriptor, then launch JMeter with the repo override:
-jmeter -Jjpgc.repo.address=file:///ABSOLUTE/PATH/TO/plugin-manager.json
+# from the repo root:
+python3 -m http.server 8910 --bind 127.0.0.1 &
+jmeter -Jjpgc.repo.address=http://127.0.0.1:8910/plugin-manager.json
 ```
 
-Open Options → Plugins Manager → Available Plugins, install, and verify:
+Open Options → Plugins Manager → Available Plugins, tick the plugin, **Apply
+Changes and Restart JMeter**, then verify:
 - `perfana-jmeter-timescaledb-X.Y.Z.jar` landed in `lib/ext/`
 - `postgresql-*.jar` and `HikariCP-*.jar` landed in `lib/`
+
+Notes:
+- `plugin-manager.json` is a JSON **array** (`[ { ... } ]`) because a repo
+  endpoint returns a list of descriptors. This is also exactly what gets pasted
+  upstream, so the file is byte-identical to `site/dat/repo/perfana.json`.
+- The static server logs a `501` for a `POST /plugin-manager.json` — that is the
+  Plugins Manager's install-stats callback and is harmless; the real jar/lib
+  downloads go to `repo1.maven.org` over HTTPS, not to this server.
+- Re-run from clean by deleting the three jars from `lib/ext/` and `lib/` first,
+  otherwise "install" proves nothing.
 
 ### Submit
 
 1. Fork `undera/jmeter-plugins`.
-2. Add the contents of `plugin-manager.json` to a new
-   `site/dat/repo/perfana.json` (or append to an existing third-party file).
+2. Copy `plugin-manager.json` verbatim to `site/dat/repo/perfana.json` — it is
+   already in the array format the upstream repo expects (or merge its single
+   entry into an existing third-party file's array).
 3. Open the PR, then link it on the
    [JMeter Plugins forum](https://jmeter-plugins.org/support/).
 

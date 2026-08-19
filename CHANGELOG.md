@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0] - 2026-08-19
+
+### Added
+- `requests_raw.source_element_path` records where in the test plan a request came from: the elements from the Thread Group down to the sampler, outermost first, as `{name, class, occurrence}`. `occurrence` numbers identically named siblings of the same class, so two `checkout` transactions in different branches of a plan stop producing indistinguishable rows — nothing else on a request row can tell them apart.
+- The listener now implements BreakTest's `SampleResultMetadataConsumer` contract: it asks for the plan path only when the `source_element_path` column exists, and for the thread variables only when session-variable capture is active, so an engine prepares nothing for a run that does not store it. Both accessors are read reflectively, so the plugin still compiles against stock Apache JMeter and writes NULL on engines without the metadata.
+
+### Changed
+- Session variables now come from the engine when it attaches them (BreakTest stamps the same snapshot on every sub-result), instead of the listener snapshotting on the sampler thread and carrying the map across by result identity. The failing leaf carries its own session state, so no parent chain has to be walked and nothing is lost when that chain is broken under load. The sampler-thread path stays as the fallback for engines without the metadata.
+
+### Notes
+- Requires Java 17 or newer on the JMeter JVM (unchanged since 1.0.0, now documented in the README): the plugin's classes are compiled for Java 17, so an older JVM fails at class load. Verified against stock Apache JMeter 5.6.3 — every column the engine can fill is written and `source_element_path` stays NULL, with the reason logged once at startup.
+- Replaces the `parent_controllers` proposal from the previous unreleased revision, which stored the *runtime* controller chain (loop pass, foreach element, per-pass id for Parallel Controllers). That engine-side design was rejected by the BreakTest maintainer in favour of the metadata mechanism above, so per-pass parallel timing is not available: the plan path is static and describes the plan, not the run.
+- The `source_element_path` column DDL is owned by the Perfana repo; `migrations/V004__add_source_element_path.sql` here is a dev/test mirror (see `docs/source-element-path-schema-writeup.md`). If the column is absent the listener logs once and omits it from the insert rather than failing, so an un-migrated database is unaffected.
+
 ## [1.1.0] - 2026-08-16
 
 ### Changed

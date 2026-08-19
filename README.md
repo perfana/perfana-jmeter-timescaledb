@@ -11,6 +11,14 @@ A JMeter backend listener plugin that writes test results directly to [Timescale
 - Two operating modes: standard load testing and synthetic monitoring
 - Virtual user tracking (standard mode)
 
+## Requirements
+
+| | |
+|---|---|
+| **Java** | **17 or newer** — the plugin's classes are compiled for Java 17, so the JVM running JMeter must be at least 17. An older JVM fails at class load with `UnsupportedClassVersionError`, even though JMeter itself still supports Java 8. |
+| **JMeter** | Apache JMeter 5.6.3 or a BreakTest build. Verified against stock 5.6.3: the plugin records everything it can and leaves engine-specific columns (`source_element_path`) `NULL`, logging the reason once at startup. |
+| **Database** | TimescaleDB (PostgreSQL). See [Database Setup](#database-setup). |
+
 ## Installation
 
 ### Maven/Gradle (recommended)
@@ -22,18 +30,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.0.5</version>
+    <version>1.2.0</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.0.5'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.2.0'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.0.5-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.2.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Distribution
 
@@ -230,7 +238,7 @@ WHERE session_variables->>'cartId' = '...';
 ./gradlew publishToMavenLocal
 ```
 
-Requires Java 17+.
+Building requires a Java 17+ JDK; see [Requirements](#requirements) for what running the plugin needs.
 
 ## TimescaleDB Tables
 

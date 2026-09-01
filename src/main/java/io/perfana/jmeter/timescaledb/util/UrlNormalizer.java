@@ -4,6 +4,7 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -19,6 +20,9 @@ public class UrlNormalizer {
 
     // Pattern for pure numeric IDs
     private static final Pattern NUMERIC_ID_PATTERN = Pattern.compile("^\\d+$");
+
+    // Separator between query param name and value: literal '=' or percent-encoded '%3d'
+    private static final Pattern PARAM_SEPARATOR_PATTERN = Pattern.compile("=|%3[dD]");
 
     // Pattern for long alphanumeric tokens (>20 chars, likely encoded values)
     private static final Pattern LONG_TOKEN_PATTERN = Pattern.compile("^[a-zA-Z0-9]{21,}$");
@@ -128,14 +132,15 @@ public class UrlNormalizer {
      * Normalizes a single query parameter by replacing its value.
      */
     private String normalizeQueryParam(String param) {
-        int equalsIndex = param.indexOf('=');
-        if (equalsIndex < 0) {
+        Matcher separator = PARAM_SEPARATOR_PATTERN.matcher(param);
+        if (!separator.find()) {
             // Parameter without value
             return param;
         }
 
-        String name = param.substring(0, equalsIndex);
-        // Replace value with placeholder
+        String name = param.substring(0, separator.start());
+        // Replace value with placeholder; everything after the first separator is dynamic,
+        // including encoded '&' (%26) and spaces (%20) that hide extra key/value pairs.
         return name + "={val}";
     }
 

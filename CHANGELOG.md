@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.1] - 2026-09-02
+
+### Changed
+- The test plan path JSON is built once per distinct path instead of once per sample. Capturing it previously cost `1 + 3N` reflective reads and a fresh JSON string on every request (`N` = path depth); it is now a single read plus a hash lookup returning a shared string. BreakTest's path entries are records, so equal paths from different threads share one cache entry and the cache is bounded by the number of samplers in the plan. The engine side was already cached at compile time and is unchanged.
+
 ## [1.3.0] - 2026-09-02
 
 ### Changed

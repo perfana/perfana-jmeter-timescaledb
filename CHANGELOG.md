@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Test plan path capture (`requests_raw.source_element_path`) is now **opt-in**: set `saveSourceElementPath=true` to enable it. Previously it was written whenever the column existed. With the toggle off the column is omitted from the insert and the listener does not ask the engine for the path.
+
+### Fixed
+- Query parameters whose `=` is percent-encoded (`encquery%3d<token>`) are now masked during URL normalization. They previously looked valueless and were stored verbatim, along with the extra pairs hidden behind `%20`/`%26`.
+
 ## [1.2.0] - 2026-08-19
 
 ### Added

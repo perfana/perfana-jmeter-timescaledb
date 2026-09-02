@@ -28,6 +28,15 @@ class TimescaleDBConfigSessionVariablesTest {
     }
 
     @Test
+    void sourceElementPathCaptureIsOptIn() {
+        assertFalse(TimescaleDBConfig.fromContext(context(new Arguments())).isSaveSourceElementPath());
+
+        Arguments args = new Arguments();
+        args.addArgument(TimescaleDBConfig.KEY_SAVE_SOURCE_ELEMENT_PATH, "true");
+        assertTrue(TimescaleDBConfig.fromContext(context(args)).isSaveSourceElementPath());
+    }
+
+    @Test
     void parsesEnabledFlagAndAllowList() {
         Arguments args = new Arguments();
         args.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "true");

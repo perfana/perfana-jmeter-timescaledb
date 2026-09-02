@@ -165,7 +165,13 @@ WHERE source_element_path @> '[{"name": "checkout", "occurrence": 1}]';
 
 The path is **static**: it describes the plan, not the run. It does not say which loop pass or which concurrent execution produced a request.
 
-Requirements: a BreakTest engine that supports listener sample metadata, and the `source_element_path` column on `requests_raw`. The listener asks the engine for the path only when that column exists, so an un-migrated database costs the engine nothing. Without either, the column is left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
+Capture is **off by default**. Switch it on with `saveSourceElementPath=true` (or `-JsaveSourceElementPath=true`).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `saveSourceElementPath` | `false` | Record the test plan path of every request in `requests_raw.source_element_path`. |
+
+Requirements: a BreakTest engine that supports listener sample metadata, and the `source_element_path` column on `requests_raw`. The listener asks the engine for the path only when capture is enabled and that column exists, so a run that does not want the path costs the engine nothing. Without either, the column is left `NULL`; the listener logs the reason once at test start and keeps recording every other column.
 
 ### Session variable capture on errors
 

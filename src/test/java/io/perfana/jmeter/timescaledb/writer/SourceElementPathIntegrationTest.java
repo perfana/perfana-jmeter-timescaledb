@@ -90,6 +90,7 @@ class SourceElementPathIntegrationTest {
         args.addArgument(TimescaleDBConfig.KEY_USER, db.getUsername());
         args.addArgument(TimescaleDBConfig.KEY_PASSWORD, db.getPassword());
         args.addArgument(TimescaleDBConfig.KEY_SSL_MODE, "disable");
+        args.addArgument(TimescaleDBConfig.KEY_SAVE_SOURCE_ELEMENT_PATH, "true");
         return TimescaleDBConfig.fromContext(new BackendListenerContext(args));
     }
 
@@ -154,6 +155,27 @@ class SourceElementPathIntegrationTest {
                 "SELECT count(DISTINCT e->>'occurrence')::text "
                 + "FROM requests_raw, jsonb_array_elements(source_element_path) e "
                 + "WHERE e->>'class' = 'org.apache.jmeter.control.TransactionController'"));
+    }
+
+    @Test
+    void staysOffUntilExplicitlyEnabled() throws Exception {
+        runMigrations(true); // column present, but capture not requested
+        Arguments args = new Arguments();
+        args.addArgument(TimescaleDBConfig.KEY_HOST, db.getHost());
+        args.addArgument(TimescaleDBConfig.KEY_PORT, String.valueOf(db.getFirstMappedPort()));
+        args.addArgument(TimescaleDBConfig.KEY_DATABASE, db.getDatabaseName());
+        args.addArgument(TimescaleDBConfig.KEY_USER, db.getUsername());
+        args.addArgument(TimescaleDBConfig.KEY_PASSWORD, db.getPassword());
+        args.addArgument(TimescaleDBConfig.KEY_SSL_MODE, "disable");
+        writer = new TimescaleDBWriter(TimescaleDBConfig.fromContext(new BackendListenerContext(args)));
+
+        assertFalse(writer.isSourceElementPathCaptureEnabled(), "Capture must be opt-in");
+
+        writer.writeAllRequestRaw(List.of(pathRecord("cart", 0)));
+        writer.flushAllBuffers();
+
+        assertNull(query("SELECT source_element_path FROM requests_raw WHERE sampler_name = 'cart'"),
+                "Nothing may be written to the column while the toggle is off");
     }
 
     @Test

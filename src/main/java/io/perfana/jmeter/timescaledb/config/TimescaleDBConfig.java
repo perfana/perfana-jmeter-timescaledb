@@ -52,6 +52,9 @@ public class TimescaleDBConfig {
     // Transaction flattening settings
     private boolean flattenNestedTransactions;
 
+    // Test plan path capture settings
+    private boolean saveSourceElementPath;
+
     // Session variable capture settings
     private boolean saveSessionVariables;
     private List<Pattern> sessionVariablesInclude;
@@ -80,6 +83,7 @@ public class TimescaleDBConfig {
     public static final String KEY_SAVE_RESPONSE_BODY = "saveResponseBody";
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
     public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
+    public static final String KEY_SAVE_SOURCE_ELEMENT_PATH = "saveSourceElementPath";
     public static final String KEY_SAVE_SESSION_VARIABLES = "saveSessionVariables";
     public static final String KEY_SESSION_VARIABLES_INCLUDE = "sessionVariablesInclude";
     public static final String KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH = "sessionVariablesMaxValueLength";
@@ -107,6 +111,7 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_SAVE_RESPONSE_BODY = "true";
     public static final String DEFAULT_NORMALIZE_URLS = "true";
     public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
+    public static final String DEFAULT_SAVE_SOURCE_ELEMENT_PATH = "false";
     public static final String DEFAULT_SAVE_SESSION_VARIABLES = "false";
     /** Empty: capture is opt-in per variable, so an unconfigured run stores nothing. */
     public static final String DEFAULT_SESSION_VARIABLES_INCLUDE = "";
@@ -167,6 +172,10 @@ public class TimescaleDBConfig {
 
         // Transaction flattening settings
         config.flattenNestedTransactions = Boolean.parseBoolean(context.getParameter(KEY_FLATTEN_NESTED_TRANSACTIONS, DEFAULT_FLATTEN_NESTED_TRANSACTIONS));
+
+        // Test plan path capture settings
+        config.saveSourceElementPath = Boolean.parseBoolean(
+                context.getParameter(KEY_SAVE_SOURCE_ELEMENT_PATH, DEFAULT_SAVE_SOURCE_ELEMENT_PATH));
 
         // Session variable capture settings
         config.saveSessionVariables = Boolean.parseBoolean(
@@ -297,6 +306,10 @@ public class TimescaleDBConfig {
 
     public boolean isFlattenNestedTransactions() {
         return flattenNestedTransactions;
+    }
+
+    public boolean isSaveSourceElementPath() {
+        return saveSourceElementPath;
     }
 
     public boolean isSaveSessionVariables() {

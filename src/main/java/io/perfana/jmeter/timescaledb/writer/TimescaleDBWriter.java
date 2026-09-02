@@ -105,14 +105,16 @@ public class TimescaleDBWriter implements AutoCloseable {
                     config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_ERROR);
         }
 
-        // Probe for the optional source_element_path column the same way. A plugin running against
-        // a database that predates the migration keeps writing every other column rather than
-        // failing every requests_raw insert.
-        this.sourceElementPathColumnPresent = probeColumn(TimescaleDBConfig.TABLE_REQUESTS_RAW, "source_element_path");
-        if (!sourceElementPathColumnPresent) {
-            LOGGER.info("Column {}.{}.source_element_path is absent; plan path capture is disabled " +
-                    "for this run.", config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
-        } else if (!SampleMetadata.isSourceElementPathSupported()) {
+        // Capture is opt-in via saveSourceElementPath. When on, probe for the column the same way:
+        // a plugin running against a database that predates the migration keeps writing every
+        // other column rather than failing every requests_raw insert.
+        this.sourceElementPathColumnPresent = config.isSaveSourceElementPath()
+                && probeColumn(TimescaleDBConfig.TABLE_REQUESTS_RAW, "source_element_path");
+        if (config.isSaveSourceElementPath() && !sourceElementPathColumnPresent) {
+            LOGGER.warn("saveSourceElementPath is enabled but column {}.{}.source_element_path is " +
+                    "absent; plan path capture is DISABLED for this run.",
+                    config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
+        } else if (sourceElementPathColumnPresent && !SampleMetadata.isSourceElementPathSupported()) {
             LOGGER.info("Column {}.{}.source_element_path exists but this engine does not attach the " +
                     "path; the column will be written empty.",
                     config.getSchema(), TimescaleDBConfig.TABLE_REQUESTS_RAW);
@@ -750,8 +752,8 @@ public class TimescaleDBWriter implements AutoCloseable {
     }
 
     /**
-     * Whether the source_element_path column is written for this run. False against a database that
-     * predates the migration, in which case the column is simply omitted from the insert.
+     * Whether the source_element_path column is written for this run (saveSourceElementPath is on
+     * AND the column exists). When false the column is simply omitted from the insert.
      */
     public boolean isSourceElementPathCaptureEnabled() {
         return sourceElementPathColumnPresent;

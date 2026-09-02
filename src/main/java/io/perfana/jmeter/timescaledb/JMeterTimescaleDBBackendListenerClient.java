@@ -217,7 +217,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
     /**
      * @return whether the engine should attach the test plan path, which is only worth doing when
-     *         the column to store it in exists
+     *         capture is enabled and the column to store it in exists
      */
     public boolean needsSourceTestElementPath() {
         return writer != null && writer.isSourceElementPathCaptureEnabled();
@@ -341,7 +341,8 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                     .responseLatency(toInt(sampleResult.getLatency()))
                     .responseTime(toInt(sampleResult.getTime()))
                     .urlHash(urlHash)
-                    .sourceElementPath(SampleMetadata.sourceElementPathJson(sampleResult))
+                    .sourceElementPath(writer.isSourceElementPathCaptureEnabled()
+                            ? SampleMetadata.sourceElementPathJson(sampleResult) : null)
                     .build();
 
             requestRawRecords.add(rawRecord);
@@ -532,6 +533,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
         // Transaction flattening parameters
         arguments.addArgument(TimescaleDBConfig.KEY_FLATTEN_NESTED_TRANSACTIONS, "${__P(flattenNestedTransactions," + TimescaleDBConfig.DEFAULT_FLATTEN_NESTED_TRANSACTIONS + ")}");
+
+        // Test plan path capture parameters
+        arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SOURCE_ELEMENT_PATH, "${__P(saveSourceElementPath," + TimescaleDBConfig.DEFAULT_SAVE_SOURCE_ELEMENT_PATH + ")}");
 
         // Session variable capture parameters
         arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "${__P(saveSessionVariables," + TimescaleDBConfig.DEFAULT_SAVE_SESSION_VARIABLES + ")}");

@@ -2,7 +2,9 @@ package io.perfana.jmeter.timescaledb.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.LinkedHashMap;
@@ -63,6 +65,22 @@ class SampleMetadataTest {
     @BeforeEach
     void resetCache() {
         SampleMetadata.clearCache();
+    }
+
+    @Test
+    void buildsTheJsonOncePerDistinctPath() {
+        List<PathEntry> path = List.of(GROUP, TRANSACTION);
+
+        String first = SampleMetadata.sourceElementPathJson(new PathTaggedSampleResult(path));
+        // A different sample, a different (but equal) list instance: as a second thread would see it.
+        String second = SampleMetadata.sourceElementPathJson(
+                new PathTaggedSampleResult(List.of(GROUP, TRANSACTION)));
+
+        assertSame(first, second, "An equal path must reuse the cached JSON, not rebuild it");
+
+        String other = SampleMetadata.sourceElementPathJson(new PathTaggedSampleResult(
+                List.of(GROUP, new PathEntry(TRANSACTION.className(), TRANSACTION.name(), 2))));
+        assertNotEquals(first, other, "A different occurrence is a different path");
     }
 
     @Test

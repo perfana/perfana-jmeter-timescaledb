@@ -43,6 +43,17 @@ public final class SampleMetadata {
     /** Keyed by declaring class AND method, because subclasses may declare what the base class lacks. */
     private static final Map<String, Optional<MethodHandle>> HANDLES = new ConcurrentHashMap<>();
 
+    /**
+     * The path is static plan data: every sample from the same sampler yields an equal path, so the
+     * JSON is built once instead of per sample. Keyed by the path itself — BreakTest's entries are
+     * records, so equal paths from different threads share one entry. The map is therefore bounded
+     * by the number of samplers in the plan; the cap only guards an engine whose entries fall back
+     * to identity equality, where every sample would otherwise add a key.
+     */
+    private static final Map<List<?>, String> PATH_JSON = new ConcurrentHashMap<>();
+
+    private static final int MAX_CACHED_PATHS = 10_000;
+
     /** Logged once, so an older engine does not produce a warning per sample. */
     private static volatile boolean unsupportedLogged;
 
@@ -62,6 +73,19 @@ public final class SampleMetadata {
         if (path.isEmpty()) {
             return null;
         }
+        String cached = PATH_JSON.get(path);
+        if (cached != null) {
+            return cached;
+        }
+        String json = toJson(path);
+        if (PATH_JSON.size() < MAX_CACHED_PATHS) {
+            PATH_JSON.put(path, json);
+        }
+        return json;
+    }
+
+    /** Reads every entry reflectively, so it runs once per distinct path rather than per sample. */
+    private static String toJson(List<?> path) {
         StringBuilder sb = new StringBuilder(96).append('[');
         for (int i = 0; i < path.size(); i++) {
             Object entry = path.get(i);
@@ -152,5 +176,6 @@ public final class SampleMetadata {
     /** Visible for testing: forget resolved accessors so a test can exercise both paths. */
     static void clearCache() {
         HANDLES.clear();
+        PATH_JSON.clear();
     }
 }

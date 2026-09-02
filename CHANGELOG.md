@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-09-02
 
 ### Changed
 - Test plan path capture (`requests_raw.source_element_path`) is now **opt-in**: set `saveSourceElementPath=true` to enable it. Previously it was written whenever the column existed. With the toggle off the column is omitted from the insert and the listener does not ask the engine for the path.

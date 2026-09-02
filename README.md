@@ -30,18 +30,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.2.0'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.3.0'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.2.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.3.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Distribution
 

@@ -551,7 +551,10 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     @Override
     public void setupTest(BackendListenerContext context) {
         try {
-            log.info("Setting up Perfana JMeter TimescaleDB Backend Listener...");
+            // Names the jar that actually won on the classpath: lib/ext is scanned in
+            // alphabetical order, so an older jar left in place shadows a newer one silently.
+            log.info("Setting up Perfana JMeter TimescaleDB Backend Listener {}...",
+                    getClass().getPackage().getImplementationVersion());
 
             // Parse configuration
             config = TimescaleDBConfig.fromContext(context);

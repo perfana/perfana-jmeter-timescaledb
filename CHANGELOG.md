@@ -1,8 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] - 2026-09-09
 
 ### Added
+- The plugin logs its own version at startup. `lib/ext` is scanned alphabetically, so an older jar left in place shadows a newer one and nothing in the log said which one was running.
 - `responseBodyMaxLength` (default 16384) truncates the error response body before it is buffered. Bodies are collected for failed samples only, so they cost nothing until the system under test starts failing — and then every failure carries a full, untruncated body. The head is kept, since that is where the stack trace or error page is, and the marker says how much was dropped.
 
 ### Fixed

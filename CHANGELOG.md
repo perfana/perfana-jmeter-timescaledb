@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `responseBodyMaxLength` (default 16384) truncates the error response body before it is buffered. Bodies are collected for failed samples only, so they cost nothing until the system under test starts failing — and then every failure carries a full, untruncated body. The head is kept, since that is where the stack trace or error page is, and the marker says how much was dropped.
+
+### Fixed
+- Backpressure now also trips on buffered response-body bytes (64 MB), not only on a record count. 50 000 buffered records mean something very different with bodies attached than without, so the count alone did not bound the footprint.
+- A buffer whose flushes keep failing is capped at 100 000 records; past that the oldest are dropped with an error line naming the count. Failed records were re-added unconditionally, so a database that stayed down grew the buffer until the JVM ran out of heap.
+
+### Notes
+- Plan path capture (`saveSourceElementPath`) was profiled against a T_Start-shaped plan on WireMock: +1.6% CPU with capture on, within run-to-run noise, and the same for the pre-cache build. The per-path JSON cache holds a flat live-object count across a run. A connection-endpoint leak observed during that work lives in the engine's async HTTP client and is independent of this plugin.
+
 ## [1.3.1] - 2026-09-02
 
 ### Changed

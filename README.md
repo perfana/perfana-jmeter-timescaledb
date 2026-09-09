@@ -113,6 +113,7 @@ io.perfana.jmeter.timescaledb.JMeterTimescaleDBBackendListenerClient
 |-----------|---------|-------------|
 | `syntheticMonitoring` | `false` | Enable synthetic monitoring mode |
 | `saveResponseBody` | `true` | Save response bodies for failed requests |
+| `responseBodyMaxLength` | `16384` | Characters of an error response body kept per failed sample; the rest is dropped with a marker. Bodies are only collected for failures, so the cost arrives all at once when the system under test starts failing. |
 | `normalizeUrls` | `true` | Enable URL normalization |
 | `flattenNestedTransactions` | `true` | Flatten nested parallel controllers into the outermost transaction (see below) |
 

@@ -444,10 +444,32 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
         String dataType = sampleResult.getDataType();
         if ("text".equals(dataType)) {
-            String respData = sampleResult.getResponseDataAsString();
-            return respData != null ? respData : null;
+            return truncateBody(sampleResult.getResponseDataAsString(), config.getResponseBodyMaxLength());
         }
         return "binary";
+    }
+
+    /**
+     * Bodies are collected for failures only, so they cost nothing until the system under test
+     * starts failing — and then every failed sample carries one. Truncating before the record is
+     * buffered bounds that: an error body is for diagnosis, and the head holds the stack trace or
+     * the error page.
+     *
+     * @param body the response body, may be null
+     * @param maxLength characters to keep; a non-positive value keeps nothing
+     * @return the body, truncated with a marker saying how much was dropped
+     */
+    static String truncateBody(String body, int maxLength) {
+        if (body == null) {
+            return null;
+        }
+        if (maxLength <= 0) {
+            return "...[truncated " + body.length() + " chars]";
+        }
+        if (body.length() <= maxLength) {
+            return body;
+        }
+        return body.substring(0, maxLength) + "\n...[truncated " + (body.length() - maxLength) + " chars]";
     }
 
     private static Integer toInt(long value) {
@@ -527,6 +549,8 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
         // Data capture parameters
         arguments.addArgument(TimescaleDBConfig.KEY_SAVE_RESPONSE_BODY, "${__P(saveResponseBody," + TimescaleDBConfig.DEFAULT_SAVE_RESPONSE_BODY + ")}");
+
+        arguments.addArgument(TimescaleDBConfig.KEY_RESPONSE_BODY_MAX_LENGTH, "${__P(responseBodyMaxLength," + TimescaleDBConfig.DEFAULT_RESPONSE_BODY_MAX_LENGTH + ")}");
 
         // URL normalization parameters
         arguments.addArgument(TimescaleDBConfig.KEY_NORMALIZE_URLS, "${__P(normalizeUrls," + TimescaleDBConfig.DEFAULT_NORMALIZE_URLS + ")}");

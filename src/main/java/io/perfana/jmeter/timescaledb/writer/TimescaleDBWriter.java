@@ -43,6 +43,9 @@ public class TimescaleDBWriter implements AutoCloseable {
     private final ScheduledExecutorService scheduler;
     private final ReentrantLock bufferLock;
 
+    /** Approximate bytes of response body currently buffered; guarded by bufferLock. */
+    private long bufferedBodyBytes;
+
     // Separate buffers for each table type
     private final List<RequestRawRecord> requestRawBuffer;
     private final List<TransactionRecord> transactionBuffer;
@@ -52,6 +55,15 @@ public class TimescaleDBWriter implements AutoCloseable {
 
     // Buffer high-water mark: when exceeded, writes block until flush completes
     private static final int BUFFER_HIGH_WATER_MARK = 50000;
+
+    /**
+     * Record counts say nothing about footprint once error bodies are attached, so buffered body
+     * bytes trip backpressure independently of the record count.
+     */
+    private static final long BODY_HIGH_WATER_BYTES = 64L * 1024 * 1024;
+
+    /** Hard ceiling for a buffer the database is not draining; past it the oldest records go. */
+    private static final int BUFFER_MAX_RECORDS = 2 * BUFFER_HIGH_WATER_MARK;
 
     // LRU cache for URL patterns to avoid duplicate upserts
     private static final int URL_PATTERN_CACHE_SIZE = 10000;
@@ -308,6 +320,7 @@ public class TimescaleDBWriter implements AutoCloseable {
         bufferLock.lock();
         try {
             requestErrorBuffer.add(record);
+            bufferedBodyBytes += bodyBytes(record);
             checkAndFlushIfNeeded();
         } finally {
             bufferLock.unlock();
@@ -325,6 +338,9 @@ public class TimescaleDBWriter implements AutoCloseable {
         bufferLock.lock();
         try {
             requestErrorBuffer.addAll(records);
+            for (RequestErrorRecord added : records) {
+                bufferedBodyBytes += bodyBytes(added);
+            }
             checkAndFlushIfNeeded();
         } finally {
             bufferLock.unlock();
@@ -384,14 +400,15 @@ public class TimescaleDBWriter implements AutoCloseable {
     private void checkAndFlushIfNeeded() {
         int totalSize = requestRawBuffer.size() + transactionBuffer.size() +
                 requestErrorBuffer.size() + virtualUsersBuffer.size();
-        if (totalSize >= BUFFER_HIGH_WATER_MARK) {
+        if (totalSize >= BUFFER_HIGH_WATER_MARK || bufferedBodyBytes >= BODY_HIGH_WATER_BYTES) {
             if (!underPressure) {
                 underPressure = true;
-                LOGGER.warn("BACKPRESSURE: buffer size {} exceeds high-water mark {}. " +
-                        "JMeter threads are blocked until flush completes. " +
-                        "Response body storage disabled until buffer drains. " +
+                LOGGER.warn("BACKPRESSURE: buffer at {} records / {} MB of response bodies " +
+                        "(marks: {} records, {} MB). JMeter threads are blocked until flush " +
+                        "completes. Response body storage disabled until buffer drains. " +
                         "TimescaleDB may not be keeping up with the write load.",
-                        totalSize, BUFFER_HIGH_WATER_MARK);
+                        totalSize, bufferedBodyBytes / (1024 * 1024),
+                        BUFFER_HIGH_WATER_MARK, BODY_HIGH_WATER_BYTES / (1024 * 1024));
             }
             flushAllBuffersLocked();
         } else {
@@ -489,6 +506,7 @@ public class TimescaleDBWriter implements AutoCloseable {
 
         List<RequestErrorRecord> toFlush = new ArrayList<>(requestErrorBuffer);
         requestErrorBuffer.clear();
+        bufferedBodyBytes = 0;
 
         try {
             writeRequestErrorBatch(toFlush);
@@ -526,6 +544,26 @@ public class TimescaleDBWriter implements AutoCloseable {
                     "Response body storage disabled.",
                     tableName, totalSize);
         }
+        // A database that stays down would otherwise grow this buffer without limit, turning a
+        // write outage into an OOM. Keep the newest records and say what was dropped.
+        if (totalSize > BUFFER_MAX_RECORDS) {
+            int drop = totalSize - BUFFER_MAX_RECORDS;
+            List<T> dropped = buffer.subList(0, drop);
+            if (buffer == requestErrorBuffer) {
+                for (T record : dropped) {
+                    bufferedBodyBytes -= bodyBytes((RequestErrorRecord) record);
+                }
+            }
+            dropped.clear();
+            LOGGER.error("Dropped {} oldest {} records: buffer exceeded {} after repeated flush " +
+                    "failures. These rows are lost.", drop, tableName, BUFFER_MAX_RECORDS);
+        }
+    }
+
+    /** Approximate footprint of a record's stored body; Java Strings are 1-2 bytes per char. */
+    private static long bodyBytes(RequestErrorRecord record) {
+        String body = record.getResponseData();
+        return body == null ? 0L : 2L * body.length();
     }
 
     /**

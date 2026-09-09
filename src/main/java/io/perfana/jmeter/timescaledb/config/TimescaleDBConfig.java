@@ -45,6 +45,7 @@ public class TimescaleDBConfig {
 
     // Data capture settings
     private boolean saveResponseBody;
+    private int responseBodyMaxLength;
 
     // URL normalization settings
     private boolean normalizeUrls;
@@ -81,6 +82,7 @@ public class TimescaleDBConfig {
     public static final String KEY_SYNTHETIC_MONITORING = "syntheticMonitoring";
     public static final String KEY_SCENARIO_NAME = "scenarioName";
     public static final String KEY_SAVE_RESPONSE_BODY = "saveResponseBody";
+    public static final String KEY_RESPONSE_BODY_MAX_LENGTH = "responseBodyMaxLength";
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
     public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
     public static final String KEY_SAVE_SOURCE_ELEMENT_PATH = "saveSourceElementPath";
@@ -109,6 +111,8 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_SYNTHETIC_MONITORING = "false";
     public static final String DEFAULT_SCENARIO_NAME = "Scenario";
     public static final String DEFAULT_SAVE_RESPONSE_BODY = "true";
+    /** An error body is for diagnosis: the first KBs carry the stack trace or error page. */
+    public static final String DEFAULT_RESPONSE_BODY_MAX_LENGTH = "16384";
     public static final String DEFAULT_NORMALIZE_URLS = "true";
     public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
     public static final String DEFAULT_SAVE_SOURCE_ELEMENT_PATH = "false";
@@ -166,6 +170,8 @@ public class TimescaleDBConfig {
 
         // Data capture settings
         config.saveResponseBody = Boolean.parseBoolean(context.getParameter(KEY_SAVE_RESPONSE_BODY, DEFAULT_SAVE_RESPONSE_BODY));
+        config.responseBodyMaxLength = Integer.parseInt(
+                context.getParameter(KEY_RESPONSE_BODY_MAX_LENGTH, DEFAULT_RESPONSE_BODY_MAX_LENGTH).trim());
 
         // URL normalization settings
         config.normalizeUrls = Boolean.parseBoolean(context.getParameter(KEY_NORMALIZE_URLS, DEFAULT_NORMALIZE_URLS));
@@ -298,6 +304,11 @@ public class TimescaleDBConfig {
 
     public boolean isSaveResponseBody() {
         return saveResponseBody;
+    }
+
+    /** Characters of an error response body kept per failed sample; the rest is dropped. */
+    public int getResponseBodyMaxLength() {
+        return responseBodyMaxLength;
     }
 
     public boolean isNormalizeUrls() {

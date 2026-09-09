@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.1] - 2026-09-09
 
 ### Added
 - `timescaleDBConnectionInitTimeout` (default 60000 ms): startup now retries the first database connection for that long instead of aborting the whole test run on a single refusal. A pooler under a starting test wave can stall logins — PgBouncer kills such a login with `FATAL: client_login_timeout` — and one refusal previously failed `setupTest`, which JMeter turns into `IllegalStateException: Failed calling setupTest`. Set to `1` for the old fail-fast behaviour.

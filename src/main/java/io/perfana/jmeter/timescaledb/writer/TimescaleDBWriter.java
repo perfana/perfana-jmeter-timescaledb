@@ -174,6 +174,19 @@ public class TimescaleDBWriter implements AutoCloseable {
         hikariConfig.setConnectionTimeout(config.getConnectionTimeout());
         hikariConfig.setPoolName("TimescaleDB-JMeter-Pool");
 
+        // Keep retrying the first connection instead of failing the whole test run on one refusal:
+        // a pooler under a starting test wave can stall logins for a while. Bound each attempt at
+        // the driver, or the first one eats the entire window and no retry ever happens — a stalled
+        // login is killed by PgBouncer's client_login_timeout (60s by default), not by us.
+        hikariConfig.setInitializationFailTimeout(config.getConnectionInitTimeout());
+        int attemptSeconds = Math.max(1, config.getConnectionTimeout() / 1000);
+        hikariConfig.addDataSourceProperty("connectTimeout", String.valueOf(attemptSeconds));
+        hikariConfig.addDataSourceProperty("loginTimeout", String.valueOf(attemptSeconds));
+        if (config.getConnectionInitTimeout() > 0) {
+            LOGGER.info("Startup will retry the first connection for up to {} ms, {} s per attempt.",
+                    config.getConnectionInitTimeout(), attemptSeconds);
+        }
+
         // Performance optimizations
         hikariConfig.addDataSourceProperty("cachePrepStmts", "true");
         hikariConfig.addDataSourceProperty("prepStmtCacheSize", "250");

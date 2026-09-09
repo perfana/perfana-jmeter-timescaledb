@@ -532,6 +532,8 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         arguments.addArgument(TimescaleDBConfig.KEY_MAX_POOL_SIZE, "${__P(timescaleMaxPoolSize," + TimescaleDBConfig.DEFAULT_MAX_POOL_SIZE + ")}");
         arguments.addArgument(TimescaleDBConfig.KEY_CONNECTION_TIMEOUT, "${__P(timescaleConnectionTimeout," + TimescaleDBConfig.DEFAULT_CONNECTION_TIMEOUT + ")}");
 
+        arguments.addArgument(TimescaleDBConfig.KEY_CONNECTION_INIT_TIMEOUT, "${__P(timescaleConnectionInitTimeout," + TimescaleDBConfig.DEFAULT_CONNECTION_INIT_TIMEOUT + ")}");
+
         // Batch parameters
         arguments.addArgument(TimescaleDBConfig.KEY_BATCH_SIZE, "${__P(timescaleBatchSize," + TimescaleDBConfig.DEFAULT_BATCH_SIZE + ")}");
         arguments.addArgument(TimescaleDBConfig.KEY_FLUSH_INTERVAL, "${__P(timescaleFlushInterval," + TimescaleDBConfig.DEFAULT_FLUSH_INTERVAL + ")}");

@@ -88,6 +88,7 @@ io.perfana.jmeter.timescaledb.JMeterTimescaleDBBackendListenerClient
 |-----------|---------|-------------|
 | `timescaleDBMaxPoolSize` | `10` | Maximum connections in pool |
 | `timescaleDBConnectionTimeout` | `30000` | Connection timeout (ms) |
+| `timescaleDBConnectionInitTimeout` | `60000` | Milliseconds startup keeps retrying the first connection before failing the test run. A pooler under a starting test wave can stall logins; retrying rides that out. `1` restores fail-fast. |
 
 ### Batch Settings
 

@@ -27,6 +27,7 @@ public class TimescaleDBConfig {
     // Connection pool settings
     private int maxPoolSize;
     private int connectionTimeout;
+    private int connectionInitTimeout;
 
     // Batch settings
     private int batchSize;
@@ -72,6 +73,7 @@ public class TimescaleDBConfig {
     public static final String KEY_SSL_MODE = "timescaleDBSslMode";
     public static final String KEY_MAX_POOL_SIZE = "timescaleDBMaxPoolSize";
     public static final String KEY_CONNECTION_TIMEOUT = "timescaleDBConnectionTimeout";
+    public static final String KEY_CONNECTION_INIT_TIMEOUT = "timescaleDBConnectionInitTimeout";
     public static final String KEY_BATCH_SIZE = "timescaleDBBatchSize";
     public static final String KEY_FLUSH_INTERVAL = "timescaleDBFlushInterval";
     public static final String KEY_RUN_ID = "runId";
@@ -101,6 +103,8 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_SSL_MODE = "prefer";
     public static final String DEFAULT_MAX_POOL_SIZE = "10";
     public static final String DEFAULT_CONNECTION_TIMEOUT = "30000";
+    /** How long startup keeps retrying the first connection. */
+    public static final String DEFAULT_CONNECTION_INIT_TIMEOUT = "60000";
     public static final String DEFAULT_BATCH_SIZE = "1000";
     public static final String DEFAULT_FLUSH_INTERVAL = "1";
     public static final String DEFAULT_RUN_ID = "Run";
@@ -152,6 +156,8 @@ public class TimescaleDBConfig {
         // Connection pool settings
         config.maxPoolSize = Integer.parseInt(context.getParameter(KEY_MAX_POOL_SIZE, DEFAULT_MAX_POOL_SIZE));
         config.connectionTimeout = Integer.parseInt(context.getParameter(KEY_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT));
+        config.connectionInitTimeout = Integer.parseInt(
+                context.getParameter(KEY_CONNECTION_INIT_TIMEOUT, DEFAULT_CONNECTION_INIT_TIMEOUT).trim());
 
         // Batch settings
         config.batchSize = Integer.parseInt(context.getParameter(KEY_BATCH_SIZE, DEFAULT_BATCH_SIZE));
@@ -264,6 +270,17 @@ public class TimescaleDBConfig {
 
     public int getConnectionTimeout() {
         return connectionTimeout;
+    }
+
+    /**
+     * Milliseconds startup keeps retrying the first connection before giving up. A busy PgBouncer
+     * can refuse logins for a while at the start of a test wave; retrying rides that out.
+     *
+     * <p>HikariCP semantics: {@code 1} attempts once and throws (its own default), {@code 0}
+     * starts the pool without throwing, and a negative value skips the initial check entirely.
+     */
+    public int getConnectionInitTimeout() {
+        return connectionInitTimeout;
     }
 
     public int getBatchSize() {

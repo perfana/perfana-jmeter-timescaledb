@@ -68,14 +68,36 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     // cannot grow unbounded. Only failed samples ever populate the carrier.
     private static final int SESSION_VARIABLE_CARRIER_MAX_ENTRIES = 10000;
 
-    private static class SampleNames {
+    static class SampleNames {
         final String transactionName;
         final String samplerName;
+        // True when no Transaction Controller could be attributed and the label was used for
+        // both names. Kept separate from name equality: a TC that happens to share its label
+        // with its only sampler is attributed, not standalone.
+        final boolean standalone;
 
         SampleNames(String transactionName, String samplerName) {
+            this(transactionName, samplerName, false);
+        }
+
+        SampleNames(String transactionName, String samplerName, boolean standalone) {
             this.transactionName = transactionName;
             this.samplerName = samplerName;
+            this.standalone = standalone;
         }
+    }
+
+    /**
+     * A leaf that resolved to the standalone shape in a plan that has emitted at least one
+     * Transaction Controller sample is a broken {@code getParent()} chain, not a genuine
+     * standalone sampler — the same reasoning {@link #standaloneTransactionRecord} applies to
+     * the transactions table. Its TC row already counts the request; writing the raw row with
+     * {@code transaction_name == sampler_name} surfaces in Perfana as a separate one-bucket
+     * metric that ADAPT then evaluates on a single sample.
+     */
+    static boolean isDetachedFromTransactionController(SampleNames names,
+                                                       boolean planUsesTransactionControllers) {
+        return names.standalone && planUsesTransactionControllers;
     }
 
     private SampleNames determineNames(SampleResult sampleResult) {
@@ -106,7 +128,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         }
 
         // Standalone samplers (no transaction parent) - use label as both names
-        return new SampleNames(sampleLabel, sampleLabel);
+        return new SampleNames(sampleLabel, sampleLabel, true);
     }
 
     private void addAllSubResults(SampleResult sampleResult, List<SampleResult> samplerList,
@@ -289,9 +311,11 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
             SampleNames names = determineNames(sampleResult);
 
-            // Skip orphan samplers that don't belong to any transaction
-            if (names == null) {
-                log.debug("Dropping orphan sampler: {}", sampleResult.getSampleLabel());
+            // Skip leaves whose Transaction Controller could not be attributed in a plan that
+            // uses them: a broken parent chain, already counted by the TC's transaction row.
+            if (isDetachedFromTransactionController(names, planUsesTransactionControllers)) {
+                log.debug("Dropping sampler detached from its Transaction Controller: {}",
+                        sampleResult.getSampleLabel());
                 continue;
             }
 

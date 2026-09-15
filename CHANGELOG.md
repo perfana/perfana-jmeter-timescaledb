@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- A sampler under a Transaction Controller whose `getParent()` chain broke (JMeter does not keep it intact in a BackendListener under load, mostly at test end) was written to `requests_raw` with `transaction_name == sampler_name`. Perfana names such a row after the bare sampler, so each one became a separate one-bucket metric beside the real `transaction.sampler` series, and ADAPT then evaluated it on a single sample. Once the plan has emitted a Transaction Controller sample, such leaves are now dropped from `requests_raw` and `requests_error` — the same rule the transactions table already applied. Plans without any Transaction Controller are unaffected.
+
 ## [1.4.1] - 2026-09-09
 
 ### Added

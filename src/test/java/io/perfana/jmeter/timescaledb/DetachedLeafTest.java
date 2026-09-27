@@ -14,19 +14,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Perfana show it as a separate one-bucket metric (seen on SONAR-00010/00014: two rows per
  * sampler in the last seconds of the run, each becoming an ADAPT "regression" on one sample).
  * Such leaves are dropped; plans without any Transaction Controller are untouched.
+ *
+ * <p>Covers the engine without transaction references, where a broken chain is
+ * indistinguishable from a standalone sampler. See {@code TransactionRefAttributionTest} for
+ * the engine that links the two, where no such guess is needed.
  */
 class DetachedLeafTest {
 
     @Test
     void standaloneShapeInATransactionControllerPlanIsDropped() {
         SampleNames names = new SampleNames("AG_04_Nieuwe_afspraak_01-0", "AG_04_Nieuwe_afspraak_01-0", true);
-        assertTrue(isDetachedFromTransactionController(names, true));
+        assertTrue(isDetachedFromTransactionController(names, true, false));
     }
 
     @Test
     void standaloneShapeInAPlanWithoutTransactionControllersIsKept() {
         SampleNames names = new SampleNames("GET /login", "GET /login", true);
-        assertFalse(isDetachedFromTransactionController(names, false),
+        assertFalse(isDetachedFromTransactionController(names, false, false),
                 "an unwrapped plan never latches planUsesTransactionControllers, so nothing is dropped");
     }
 
@@ -35,12 +39,12 @@ class DetachedLeafTest {
         // A TC "Login" whose only child is also labelled "Login" resolves through the parent
         // chain, so it is attributed — name equality alone must not classify it as detached.
         SampleNames names = new SampleNames("Login", "Login", false);
-        assertFalse(isDetachedFromTransactionController(names, true));
+        assertFalse(isDetachedFromTransactionController(names, true, false));
     }
 
     @Test
     void attributedLeafIsKept() {
         SampleNames names = new SampleNames("AG_04_Nieuwe_afspraak", "AG_04_Nieuwe_afspraak_01-0", false);
-        assertFalse(isDetachedFromTransactionController(names, true));
+        assertFalse(isDetachedFromTransactionController(names, true, false));
     }
 }

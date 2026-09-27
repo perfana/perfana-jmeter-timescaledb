@@ -136,6 +136,15 @@ When a test plan uses the Blazemeter **Parallel Controller** (`com.blazemeter.jm
 
 The default (`true`) gives the most predictable grouping for dashboards and SLA reporting. Set to `false` only if you need per-parallel-batch timing data in the `transactions` table.
 
+### How a sampler is attributed to its Transaction Controller
+
+Both settings above describe *which* transaction a sampler is stored under. How the listener finds it depends on the engine, and it logs which of the two ran at startup:
+
+- **BreakTest 2026.09.25 and newer** — the engine links every sampler result to the transaction it ran in, so attribution is exact. That release removed the Transaction Controller's *Generate parent sample* option: a sampler reaches the listener as soon as it completes, and the transaction sample arrives afterwards carrying only running totals, no nested children. A sampler the engine reports as running outside every transaction is genuinely standalone and is recorded as its own single-step transaction.
+- **Stock Apache JMeter and older BreakTest builds** — attribution walks the sub-result parent chain up to the enclosing Transaction Controller. JMeter does not keep that chain intact in a BackendListener under load, so a sampler that arrives detached from its Transaction Controller is dropped rather than stored under its own name, which would show up in Perfana as a separate one-sample metric beside the real one.
+
+A sampler label of the form `transaction::sampler` overrides both, in either engine.
+
 ### Test plan path (`requests_raw.source_element_path`)
 
 Every request can record where in the test plan it came from — the elements enclosing it, outermost first, from the Thread Group down to the sampler itself:

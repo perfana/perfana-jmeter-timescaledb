@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Samplers are attributed to their Transaction Controller by reference on BreakTest 2026.09.25 and newer.** That release removed the Transaction Controller's *Generate parent sample* mode: a transaction sample no longer carries its samplers as sub-results, each sampler is delivered on its own as soon as it completes with `SampleResult.getParentTransaction()` naming the transaction it ran in, and the transaction sample arrives last with running totals only. Every sampler therefore reached the listener with `getParent() == null`, which the parent-chain walk read as standalone, and the detached-leaf rule from 1.5.0 then dropped it — so `requests_raw` and `requests_error` stayed all but empty for any plan with a Transaction Controller while the `transactions` table looked healthy. Attribution now reads the reference, which is exact, and the heuristics that needed a guess are switched off on such an engine.
+- `flattenNestedTransactions=true` flattens again on that engine. Nesting was decided by walking the same broken chain, so a nested Transaction Controller no longer looked nested and was written as its own transaction row beside the outermost one.
+- A sampler that runs outside every Transaction Controller keeps its single-step transaction row in a plan that uses them. The 1.5.0 rule had to suppress it, because a parent-chain walk cannot tell a genuine standalone from a broken link; the engine's reference can.
+- An HTTP embedded resource or redirect step is attributed through the sampler that owns it, since only the top-level result carries the reference.
+
+### Notes
+- Stock Apache JMeter and older BreakTest builds are unchanged: they have no transaction references, so the sub-result parent chain and the 1.5.0 detached-leaf rule still apply. The listener logs which of the two attributions is active at startup. Everything is read reflectively, so one jar runs on either engine.
+- BreakTest 2026.09.25 also fixes a negative transaction elapsed time for a Transaction Controller with a trailing think time inside it (BreakTest #165), measured at -1681 ms before and 1392 ms after on the same plan. `transactions.response_time` took that value verbatim, so upgrading the engine also repairs those rows.
+
 ## [1.5.0] - 2026-09-15
 
 ### Fixed

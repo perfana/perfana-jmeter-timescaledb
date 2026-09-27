@@ -44,7 +44,7 @@ class StandaloneTransactionTest {
         SampleResult login = sampler("GET /login", 123, true);
 
         TransactionRecord record = JMeterTimescaleDBBackendListenerClient
-                .standaloneTransactionRecord(login, login.getSampleLabel(), config(), false);
+                .standaloneTransactionRecord(login, login.getSampleLabel(), config(), false, false);
 
         assertNotNull(record, "a sampler with no Transaction Controller must produce a transaction row");
         assertEquals("GET /login", record.getTransactionName());
@@ -64,7 +64,7 @@ class StandaloneTransactionTest {
 
         long transactionRows = Arrays.stream(plan)
                 .map(s -> JMeterTimescaleDBBackendListenerClient
-                        .standaloneTransactionRecord(s, s.getSampleLabel(), config(), false))
+                        .standaloneTransactionRecord(s, s.getSampleLabel(), config(), false, false))
                 .filter(Objects::nonNull)
                 .count();
 
@@ -82,7 +82,7 @@ class StandaloneTransactionTest {
         child.setParent(tc);
 
         TransactionRecord record = JMeterTimescaleDBBackendListenerClient
-                .standaloneTransactionRecord(child, child.getSampleLabel(), config(), false);
+                .standaloneTransactionRecord(child, child.getSampleLabel(), config(), false, false);
 
         assertNull(record, "a sampler nested under a Transaction Controller must not emit its own transaction row");
     }
@@ -97,7 +97,7 @@ class StandaloneTransactionTest {
         assertNull(orphanChild.getParent(), "test setup: parent chain is broken");
 
         TransactionRecord record = JMeterTimescaleDBBackendListenerClient
-                .standaloneTransactionRecord(orphanChild, orphanChild.getSampleLabel(), config(), true);
+                .standaloneTransactionRecord(orphanChild, orphanChild.getSampleLabel(), config(), true, false);
 
         assertNull(record,
                 "in a plan that uses Transaction Controllers, a child with a broken parent chain "

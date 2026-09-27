@@ -9,6 +9,7 @@ import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
 import io.perfana.jmeter.timescaledb.util.SampleMetadata;
 import io.perfana.jmeter.timescaledb.util.SessionVariableCarrier;
 import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
+import io.perfana.jmeter.timescaledb.util.TransactionRefs;
 import io.perfana.jmeter.timescaledb.util.UrlNormalizer;
 import io.perfana.jmeter.timescaledb.writer.TimescaleDBWriter;
 import org.apache.jmeter.assertions.AssertionResult;
@@ -62,6 +63,10 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     // hasTransactionAncestor() alone can misjudge a TC child as standalone. Once we know the
     // plan uses TCs at all, an "unattributed" leaf is a linkage failure, not a genuine
     // standalone — so we never fabricate a single-step transaction for it. Never reset.
+    //
+    // Only consulted on an engine without transaction references. One that has them attributes
+    // every sample exactly (see TransactionRefs), which makes both the guess and the latch's
+    // dependence on seeing a TC sample first (they now arrive after their samplers) unnecessary.
     private volatile boolean planUsesTransactionControllers = false;
 
     // Safety cap so snapshots from dropped phantom samples (never seen by the worker)
@@ -96,11 +101,16 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
      * metric that ADAPT then evaluates on a single sample.
      */
     static boolean isDetachedFromTransactionController(SampleNames names,
-                                                       boolean planUsesTransactionControllers) {
-        return names.standalone && planUsesTransactionControllers;
+                                                       boolean planUsesTransactionControllers,
+                                                       boolean engineLinksTransactions) {
+        return names.standalone && planUsesTransactionControllers && !engineLinksTransactions;
     }
 
-    private SampleNames determineNames(SampleResult sampleResult) {
+    /**
+     * @param flattenNestedTransactions report the outermost enclosing Transaction Controller rather
+     *                                  than the innermost, as {@code flattenNestedTransactions} asks
+     */
+    static SampleNames determineNames(SampleResult sampleResult, boolean flattenNestedTransactions) {
         String sampleLabel = sampleResult.getSampleLabel();
         int separatorIndex = sampleLabel.indexOf(SEPARATOR);
         if (separatorIndex > 0) {
@@ -110,13 +120,23 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             );
         }
 
+        // An engine that links samples to their transaction answers this outright: a sample with no
+        // reference is genuinely standalone, not a leaf whose parent chain broke.
+        if (TransactionRefs.linksTransactions(sampleResult)) {
+            String linkedTransaction =
+                    TransactionRefs.transactionName(sampleResult, flattenNestedTransactions);
+            return linkedTransaction != null
+                    ? new SampleNames(linkedTransaction, sampleLabel)
+                    : new SampleNames(sampleLabel, sampleLabel, true);
+        }
+
         SampleResult current = sampleResult;
         String transactionLabel = null;
         while (current != null) {
             String responseMessage = current.getResponseMessage();
             if (responseMessage != null && responseMessage.startsWith(TRANSACTION_MESSAGE)) {
                 transactionLabel = current.getSampleLabel();
-                if (!config.isFlattenNestedTransactions()) {
+                if (!flattenNestedTransactions) {
                     break;
                 }
             }
@@ -137,7 +157,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                                   Map<SampleResult, Map<String, String>> leafSnapshots) {
         if (sampleResult.getResponseMessage() != null && sampleResult.getResponseMessage().startsWith(TRANSACTION_MESSAGE)) {
             planUsesTransactionControllers = true;
-            if (!config.isFlattenNestedTransactions() || !hasTransactionAncestor(sampleResult)) {
+            if (!config.isFlattenNestedTransactions() || !isNestedTransaction(sampleResult)) {
                 transactionList.add(sampleResult);
             }
         } else if (sampleResult.getSubResults().length == 0) {
@@ -150,6 +170,17 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         for (SampleResult subResult : sampleResult.getSubResults()) {
             addAllSubResults(subResult, samplerList, transactionList, snapshot, leafSnapshots);
         }
+    }
+
+    /**
+     * Whether a Transaction Controller sample sits inside another transaction, so
+     * {@code flattenNestedTransactions} keeps only the outermost transaction row. The reference an
+     * engine attaches is exact; the sub-result parent chain is all an older one has.
+     */
+    static boolean isNestedTransaction(SampleResult transactionSample) {
+        return TransactionRefs.linksTransactions(transactionSample)
+                ? TransactionRefs.isNestedTransaction(transactionSample)
+                : hasTransactionAncestor(transactionSample);
     }
 
     static boolean hasTransactionAncestor(SampleResult sampleResult) {
@@ -309,11 +340,13 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         for (SampleResult sampleResult : samplerList) {
             getUserMetrics().add(sampleResult);
 
-            SampleNames names = determineNames(sampleResult);
+            boolean engineLinksTransactions = TransactionRefs.linksTransactions(sampleResult);
+            SampleNames names = determineNames(sampleResult, config.isFlattenNestedTransactions());
 
             // Skip leaves whose Transaction Controller could not be attributed in a plan that
             // uses them: a broken parent chain, already counted by the TC's transaction row.
-            if (isDetachedFromTransactionController(names, planUsesTransactionControllers)) {
+            if (isDetachedFromTransactionController(names, planUsesTransactionControllers,
+                    engineLinksTransactions)) {
                 log.debug("Dropping sampler detached from its Transaction Controller: {}",
                         sampleResult.getSampleLabel());
                 continue;
@@ -377,7 +410,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             // already produced the transaction row).
             TransactionRecord standaloneTransaction =
                     standaloneTransactionRecord(sampleResult, names.transactionName, config,
-                            planUsesTransactionControllers);
+                            planUsesTransactionControllers, engineLinksTransactions);
             if (standaloneTransaction != null) {
                 transactionRecords.add(standaloneTransaction);
             }
@@ -510,18 +543,25 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
      * enclosing TC already produces the transaction row, so emitting one here would
      * double-count.
      *
-     * <p>Also returns {@code null} whenever {@code planUsesTransactionControllers} is true —
-     * i.e. this run has emitted at least one TC sample. In a plan that uses TCs, a leaf whose
-     * {@link #hasTransactionAncestor} walk comes up empty is almost always a broken
-     * {@code getParent()} chain (JMeter does not keep that chain intact in a BackendListener
-     * under load), not a genuine standalone sampler; fabricating a transaction for it produces
-     * bogus rows that duplicate real requests.
+     * <p>On an engine without transaction references, also returns {@code null} whenever
+     * {@code planUsesTransactionControllers} is true — i.e. this run has emitted at least one TC
+     * sample. In a plan that uses TCs, a leaf whose {@link #hasTransactionAncestor} walk comes up
+     * empty is almost always a broken {@code getParent()} chain (JMeter does not keep that chain
+     * intact in a BackendListener under load), not a genuine standalone sampler; fabricating a
+     * transaction for it produces bogus rows that duplicate real requests.
+     *
+     * <p>An engine that links samples to their transaction needs none of that guesswork: the sample
+     * says whether it ran inside one, so a standalone sampler keeps its single-step transaction row
+     * even in a plan that is full of Transaction Controllers.
      */
     static TransactionRecord standaloneTransactionRecord(SampleResult sampler,
                                                          String transactionName,
                                                          TimescaleDBConfig config,
-                                                         boolean planUsesTransactionControllers) {
-        if (planUsesTransactionControllers || hasTransactionAncestor(sampler)) {
+                                                         boolean planUsesTransactionControllers,
+                                                         boolean engineLinksTransactions) {
+        if (engineLinksTransactions
+                ? TransactionRefs.isInsideTransaction(sampler)
+                : planUsesTransactionControllers || hasTransactionAncestor(sampler)) {
             return null;
         }
         return TransactionRecord.builder()
@@ -621,6 +661,18 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                         "will be captured. List the variable names to store, wildcards allowed " +
                         "(e.g. -JsessionVariablesInclude=cartId,order*).",
                         TimescaleDBConfig.KEY_SESSION_VARIABLES_INCLUDE);
+            }
+
+            // Says which attribution ran, because the two disagree in exactly the case that is
+            // hard to see afterwards: a sampler stored under its own name instead of its
+            // Transaction Controller's.
+            if (TransactionRefs.isSupported()) {
+                log.info("This engine links each sample to its Transaction Controller; samplers are "
+                        + "attributed by reference.");
+            } else {
+                log.info("This engine has no transaction references; samplers are attributed through "
+                        + "the sub-result parent chain. Requires BreakTest 2026.09.25 or newer for "
+                        + "exact attribution.");
             }
 
             // Initialize writer

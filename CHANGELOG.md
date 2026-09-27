@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.6.0] - 2026-09-27
 
 ### Fixed
 - **Samplers are attributed to their Transaction Controller by reference on BreakTest 2026.09.25 and newer.** That release removed the Transaction Controller's *Generate parent sample* mode: a transaction sample no longer carries its samplers as sub-results, each sampler is delivered on its own as soon as it completes with `SampleResult.getParentTransaction()` naming the transaction it ran in, and the transaction sample arrives last with running totals only. Every sampler therefore reached the listener with `getParent() == null`, which the parent-chain walk read as standalone, and the detached-leaf rule from 1.5.0 then dropped it — so `requests_raw` and `requests_error` stayed all but empty for any plan with a Transaction Controller while the `transactions` table looked healthy. Attribution now reads the reference, which is exact, and the heuristics that needed a guess are switched off on such an engine.

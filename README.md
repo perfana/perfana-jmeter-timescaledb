@@ -16,8 +16,42 @@ A JMeter backend listener plugin that writes test results directly to [Timescale
 | | |
 |---|---|
 | **Java** | **17 or newer** — the plugin's classes are compiled for Java 17, so the JVM running JMeter must be at least 17. An older JVM fails at class load with `UnsupportedClassVersionError`, even though JMeter itself still supports Java 8. |
-| **JMeter** | Apache JMeter 5.6.3 or a BreakTest build. Verified against stock 5.6.3: the plugin records everything it can and leaves engine-specific columns (`source_element_path`) `NULL`, logging the reason once at startup. |
+| **JMeter** | **BreakTest 2026.09.25 or newer is recommended** and is the only engine on which every plan shape is recorded correctly. Apache JMeter 5.6.3 and older BreakTest builds still work, with the constraints in [Engine support](#engine-support) — most importantly, every sampler must sit under a Transaction Controller with *Generate parent sample* enabled. |
 | **Database** | TimescaleDB (PostgreSQL). See [Database Setup](#database-setup). |
+
+## Engine support
+
+A request row is only useful if it carries the name of the transaction it belongs to, and how the listener can find that name depends on the engine. BreakTest 2026.09.25 links every sampler result to the transaction it ran in, so attribution is exact. Every older engine, stock Apache JMeter included, leaves the listener walking the sub-result parent chain, which only exists when the Transaction Controller generates a parent sample.
+
+| | BreakTest 2026.09.25+ | Older BreakTest, Apache JMeter 5.6.3 |
+|---|---|---|
+| Samplers under a Transaction Controller | Recorded, named after the controller | Recorded **only** with *Generate parent sample* enabled |
+| Samplers outside every Transaction Controller, in a plan that uses them | Recorded as their own single-step transaction | **Dropped** from `requests_raw`, `requests_error` and `transactions` |
+| Nested Transaction Controllers | Flattened per `flattenNestedTransactions` | Flattened only with *Generate parent sample* enabled |
+| Plans with no Transaction Controller at all | Every sampler is its own transaction | Every sampler is its own transaction |
+| `requests_raw.source_element_path` | Written when enabled | BreakTest with listener sample metadata only; `NULL` on stock JMeter |
+| Session variables on error | Attached by the engine to the failing sample | Same on any BreakTest with listener sample metadata (2026.08+); snapshotted on the sampler thread on stock JMeter |
+
+Measured on a plan with one nested Transaction Controller and one sampler outside it, 2 threads × 2 loops, so 12 requests and 8 transactions are expected:
+
+| Engine and plan | `requests_raw` | `transactions` |
+|---|---|---|
+| BreakTest 2026.09.25 | 12 of 12, all attributed | 8, correct |
+| BreakTest 2026.08.24, *Generate parent sample* on | 8 of 12 (the standalone sampler is dropped) | 4 |
+| BreakTest 2026.08.24, *Generate parent sample* off | 3 of 12, each named after its own sampler | 11, including fabricated and unflattened rows |
+
+The second row is the cost of the rule introduced in 1.5.0: without transaction references, a sampler that arrives with no Transaction Controller ancestor is indistinguishable from one whose parent chain broke under load, and storing it under its own name puts a one-sample metric into Perfana beside the real one. Dropping it is the safer of two bad options. On BreakTest 2026.09.25 the engine answers the question outright, so neither guess nor drop is needed.
+
+The third row is not a supported configuration. If you cannot upgrade the engine, keep *Generate parent sample* enabled and keep every sampler inside a Transaction Controller.
+
+The listener logs which of the two attributions is active at startup, along with its own version:
+
+```
+Setting up Perfana JMeter TimescaleDB Backend Listener 1.6.0...
+This engine links each sample to its Transaction Controller; samplers are attributed by reference.
+```
+
+Check both lines before trusting a run. `lib/ext` is scanned alphabetically, so an older copy of this jar left in place silently wins over a newer one: `perfana-jmeter-timescaledb-1.3.1-all.jar` shadows `-1.6.0-all.jar`. Delete the old jar rather than adding the new one beside it.
 
 ## Installation
 
@@ -141,7 +175,9 @@ The default (`true`) gives the most predictable grouping for dashboards and SLA 
 Both settings above describe *which* transaction a sampler is stored under. How the listener finds it depends on the engine, and it logs which of the two ran at startup:
 
 - **BreakTest 2026.09.25 and newer** — the engine links every sampler result to the transaction it ran in, so attribution is exact. That release removed the Transaction Controller's *Generate parent sample* option: a sampler reaches the listener as soon as it completes, and the transaction sample arrives afterwards carrying only running totals, no nested children. A sampler the engine reports as running outside every transaction is genuinely standalone and is recorded as its own single-step transaction.
-- **Stock Apache JMeter and older BreakTest builds** — attribution walks the sub-result parent chain up to the enclosing Transaction Controller. JMeter does not keep that chain intact in a BackendListener under load, so a sampler that arrives detached from its Transaction Controller is dropped rather than stored under its own name, which would show up in Perfana as a separate one-sample metric beside the real one.
+- **Stock Apache JMeter and older BreakTest builds** — attribution walks the sub-result parent chain up to the enclosing Transaction Controller, which requires *Generate parent sample*. JMeter does not keep that chain intact in a BackendListener under load, so a sampler that arrives detached from its Transaction Controller is dropped rather than stored under its own name, which would show up in Perfana as a separate one-sample metric beside the real one. A genuinely standalone sampler is indistinguishable from a detached one and is dropped with it.
+
+See [Engine support](#engine-support) for what each engine records, with measured row counts.
 
 A sampler label of the form `transaction::sampler` overrides both, in either engine.
 

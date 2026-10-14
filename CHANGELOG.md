@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0] - 2026-10-14
 
 ### Added
 - Startup logs one line per failed connection attempt: attempt number, how much of the window is used, and the root cause. A run that could not reach the database logged `HikariDataSource - Starting...` and then nothing until the pool gave up 75 seconds later, because the retry loop belonged to HikariCP and logs its failures at DEBUG. The number of attempts could not be read from the log at any level. The final line names the attempt count and points at `timescaleDBConnectionInitTimeout`.

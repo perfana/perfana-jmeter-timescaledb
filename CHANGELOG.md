@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Startup logs one line per failed connection attempt: attempt number, how much of the window is used, and the root cause. A run that could not reach the database logged `HikariDataSource - Starting...` and then nothing until the pool gave up 75 seconds later, because the retry loop belonged to HikariCP and logs its failures at DEBUG. The number of attempts could not be read from the log at any level. The final line names the attempt count and points at `timescaleDBConnectionInitTimeout`.
+- The startup line now says how many attempts the window actually buys, in both directions: `as few as 2 attempt(s) if every attempt stalls for the full 30 s, up to about 60 if they fail immediately`. The count is not configurable and is not obvious: it falls out of the window divided by how long one failed attempt takes. A refused port fails in milliseconds and the default window buys dozens; a login that stalls burns the whole per-attempt cap, and the default 60000 ms window over a 30 s cap is two tries.
+
+### Changed
+- The retry window is now driven by the plugin instead of HikariCP's `initializationFailTimeout`, which is set to fail on the first attempt per pool. Same cadence (attempt, then a one second pause while the window has time left), so a run that used to connect still connects on the same attempt. `timescaleDBConnectionInitTimeout` values of `0` and negative keep HikariCP's own meaning and are handed straight to it.
+
+### Fixed
+- URL normalization now masks `;jsessionid=` and the other `;name=value` path parameters a segment can carry. A session id there is unique per user, so every request produced its own `url_patterns` row and its own one-request metric in Perfana. The parameter name is kept and the value becomes `{val}`, matching how query parameters are handled.
+- A path segment that mixes letters and digits and is at least 8 characters long is masked as `{id}`. Identifiers like Siebel's `1-q02oj1h` are not numeric, not a UUID, and far short of the 21 characters the long-token rule required, so they went through verbatim. The 8-character floor keeps real path words that carry a digit: `v1`, `v2`, `oauth2`, `html5`, `base64`, `sha256`.
+- Only the path is examined now; the scheme and host are copied through untouched. Without that, the new mixed-id rule would have masked a farm node such as `web3app0110.farm.example.com` and collapsed every node into one pattern.
+
+### Notes
+- The masking rules are now documented in the README, including which columns deliberately keep the original URL (`requests_error.url`, `url_patterns.original_example`).
+- Previously unmasked URLs get a new `url_hash`, so `url_patterns` gains one row per pattern where it used to gain one row per request. Existing `{id}`, `{uuid}` and `{token}` patterns keep their hashes: the mixed-id rule runs after the long-token rule precisely so nothing that already normalized moves.
+
 ## [1.6.0] - 2026-09-27
 
 ### Fixed

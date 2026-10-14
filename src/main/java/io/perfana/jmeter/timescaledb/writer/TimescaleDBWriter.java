@@ -67,6 +67,12 @@ public class TimescaleDBWriter implements AutoCloseable {
 
     // LRU cache for URL patterns to avoid duplicate upserts
     private static final int URL_PATTERN_CACHE_SIZE = 10000;
+
+    /** HikariCP's own default: validate once and throw on failure. The retry window is ours. */
+    private static final long FAIL_ON_FIRST_ATTEMPT = 1L;
+
+    /** The pause HikariCP used between its own startup attempts, kept so the cadence is unchanged. */
+    private static final long RETRY_PAUSE_MS = 1000L;
     private final Set<String> knownUrlPatterns;
 
     // Commit url_patterns in small groups instead of one transaction per flush.
@@ -178,13 +184,23 @@ public class TimescaleDBWriter implements AutoCloseable {
         // a pooler under a starting test wave can stall logins for a while. Bound each attempt at
         // the driver, or the first one eats the entire window and no retry ever happens — a stalled
         // login is killed by PgBouncer's client_login_timeout (60s by default), not by us.
-        hikariConfig.setInitializationFailTimeout(config.getConnectionInitTimeout());
         int attemptSeconds = Math.max(1, config.getConnectionTimeout() / 1000);
         hikariConfig.addDataSourceProperty("connectTimeout", String.valueOf(attemptSeconds));
         hikariConfig.addDataSourceProperty("loginTimeout", String.valueOf(attemptSeconds));
-        if (config.getConnectionInitTimeout() > 0) {
-            LOGGER.info("Startup will retry the first connection for up to {} ms, {} s per attempt.",
-                    config.getConnectionInitTimeout(), attemptSeconds);
+        long initTimeout = config.getConnectionInitTimeout();
+        if (initTimeout > 0) {
+            // Says how many attempts the window actually buys, which is not obvious: the count
+            // depends entirely on how fast one attempt fails. A refused port fails in milliseconds
+            // and the window buys dozens; a login that stalls burns the whole per-attempt cap, and
+            // a 60 s window over a 30 s cap is then two tries, which is not what "retry for 60
+            // seconds" sounds like.
+            LOGGER.info("Startup will retry the first connection for up to {} ms, {} s per attempt: "
+                            + "as few as {} attempt(s) if every attempt stalls for the full {} s, "
+                            + "up to about {} if they fail immediately.",
+                    initTimeout, attemptSeconds,
+                    fewestAttempts(initTimeout, attemptSeconds * 1000L, RETRY_PAUSE_MS),
+                    attemptSeconds,
+                    fewestAttempts(initTimeout, 0, RETRY_PAUSE_MS));
         }
 
         // Performance optimizations
@@ -193,7 +209,92 @@ public class TimescaleDBWriter implements AutoCloseable {
         hikariConfig.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
         hikariConfig.addDataSourceProperty("reWriteBatchedInserts", "true");
 
-        return new HikariDataSource(hikariConfig);
+        if (initTimeout <= 0) {
+            // Zero and negative are HikariCP's own modes (start the pool without a failing check,
+            // or skip the check altogether), so hand those straight to it.
+            hikariConfig.setInitializationFailTimeout(initTimeout);
+            return new HikariDataSource(hikariConfig);
+        }
+        return createDataSourceWithRetry(hikariConfig, initTimeout, attemptSeconds);
+    }
+
+    /**
+     * Retries the first connection for the configured window, one line per failed attempt.
+     *
+     * <p>The window used to be handed to HikariCP's own {@code initializationFailTimeout}, whose
+     * retry loop logs each failure at DEBUG. A run that could not reach the database therefore
+     * logged "Starting..." and then nothing at all until the pool gave up (75 s on
+     * WERKNL-acceptatie-combitest-00009), and the number of attempts could not be read from the log
+     * at any level. The cadence here is the same, attempt then a one second pause while the window
+     * has time left, so a run that used to connect still connects on the same attempt.
+     */
+    private HikariDataSource createDataSourceWithRetry(HikariConfig hikariConfig,
+                                                       long initTimeout,
+                                                       int attemptSeconds) {
+        // One attempt per data source, so this method owns the waiting and the logging.
+        hikariConfig.setInitializationFailTimeout(FAIL_ON_FIRST_ATTEMPT);
+
+        long start = System.currentTimeMillis();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                HikariDataSource dataSource = new HikariDataSource(hikariConfig);
+                if (attempt > 1) {
+                    LOGGER.info("Connected to TimescaleDB on attempt {} after {} ms.",
+                            attempt, System.currentTimeMillis() - start);
+                }
+                return dataSource;
+            } catch (RuntimeException e) {
+                long elapsed = System.currentTimeMillis() - start;
+                if (elapsed >= initTimeout) {
+                    LOGGER.error("Giving up on TimescaleDB after {} connection attempt(s) in {} ms "
+                                    + "({} ms window, {} s per attempt). Raise {} to retry for "
+                                    + "longer. Last failure: {}",
+                            attempt, elapsed, initTimeout, attemptSeconds,
+                            TimescaleDBConfig.KEY_CONNECTION_INIT_TIMEOUT, rootCauseMessage(e));
+                    throw e;
+                }
+                LOGGER.warn("TimescaleDB connection attempt {} failed, {} ms of the {} ms startup "
+                                + "window used, retrying in {} ms: {}",
+                        attempt, elapsed, initTimeout, RETRY_PAUSE_MS, rootCauseMessage(e));
+                sleepBetweenAttempts();
+            }
+        }
+    }
+
+    /**
+     * How many attempts the window allows, given how long one attempt takes. Pass the per-attempt
+     * cap for the floor (a stalled login burns all of it, which is the case that surprises people)
+     * and zero for the ceiling (a refused port fails in milliseconds). The loop starts an attempt
+     * whenever the window still has time left, so the last one can overrun it.
+     *
+     * @param attemptMillis how long one failing attempt takes
+     */
+    static int fewestAttempts(long initTimeout, long attemptMillis, long pauseMillis) {
+        long cycle = Math.max(1L, attemptMillis + pauseMillis);
+        int attempts = 0;
+        for (long elapsed = 0; elapsed < initTimeout || attempts == 0; elapsed += cycle) {
+            attempts++;
+        }
+        return attempts;
+    }
+
+    /** @return the deepest cause's message, which is the one naming what actually went wrong */
+    private static String rootCauseMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause.getClass().getSimpleName() + ": " + cause.getMessage();
+    }
+
+    private static void sleepBetweenAttempts() {
+        try {
+            Thread.sleep(RETRY_PAUSE_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting to retry the first "
+                    + "TimescaleDB connection", e);
+        }
     }
 
     private String buildRequestRawInsertSql() {

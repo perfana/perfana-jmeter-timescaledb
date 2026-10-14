@@ -28,6 +28,14 @@ public class UrlNormalizer {
     private static final Pattern LONG_TOKEN_PATTERN = Pattern.compile("^[a-zA-Z0-9]{21,}$");
 
     /**
+     * A path segment mixing letters and digits is an identifier, not a word: a Siebel row id
+     * ({@code 1-q02oj1h}), a short hash, a tenant key. Eight characters is the floor that keeps the
+     * real path words which happen to carry a digit: {@code v1}, {@code v2}, {@code oauth2},
+     * {@code html5}, {@code base64}, {@code sha256}.
+     */
+    private static final int MIN_MIXED_ID_LENGTH = 8;
+
+    /**
      * Result of URL normalization containing the normalized URL, its hash, and the original.
      */
     public record NormalizedUrl(String normalized, String hash, String original) {}
@@ -79,11 +87,18 @@ public class UrlNormalizer {
 
     /**
      * Normalizes URL path by replacing dynamic segments.
-     * Order of replacement: UUID -> Numeric ID -> Long tokens
+     * Order of replacement: UUID -> Numeric ID -> Long tokens -> mixed letter/digit ids.
+     *
+     * <p>Only the path is examined. The scheme and host are copied through untouched, or a host
+     * like {@code web3app0110.farm.example.com} would be masked as an identifier and every node
+     * of a farm would collapse into one pattern.
      */
     private String normalizePath(String path) {
+        int pathStart = pathStart(path);
+        String authority = path.substring(0, pathStart);
+
         // First replace UUIDs
-        String result = UUID_PATTERN.matcher(path).replaceAll("{uuid}");
+        String result = UUID_PATTERN.matcher(path.substring(pathStart)).replaceAll("{uuid}");
 
         // Split into segments and process each
         String[] segments = result.split("/", -1);
@@ -93,24 +108,99 @@ public class UrlNormalizer {
                 continue;
             }
 
-            // Skip if already normalized
-            if (segment.startsWith("{") && segment.endsWith("}")) {
-                continue;
+            // Path parameters (;jsessionid=...) belong to the segment, not to the query, so they
+            // are masked here and the segment itself is classified without them.
+            String parameters = "";
+            int semicolon = segment.indexOf(';');
+            if (semicolon >= 0) {
+                parameters = normalizePathParameters(segment.substring(semicolon));
+                segment = segment.substring(0, semicolon);
             }
 
-            // Check for numeric ID
-            if (NUMERIC_ID_PATTERN.matcher(segment).matches()) {
-                segments[i] = "{id}";
-                continue;
-            }
-
-            // Check for long alphanumeric token
-            if (LONG_TOKEN_PATTERN.matcher(segment).matches()) {
-                segments[i] = "{token}";
-            }
+            segments[i] = classifySegment(segment) + parameters;
         }
 
-        return String.join("/", segments);
+        return authority + String.join("/", segments);
+    }
+
+    /**
+     * @return the index where the path begins, so that the scheme and host are never classified
+     */
+    private static int pathStart(String url) {
+        int schemeEnd = url.indexOf("://");
+        if (schemeEnd < 0) {
+            return 0;
+        }
+        int slash = url.indexOf('/', schemeEnd + 3);
+        return slash < 0 ? url.length() : slash;
+    }
+
+    /**
+     * Masks the values of the {@code ;name=value} parameters a path segment can carry. A
+     * {@code jsessionid} there is per session, so leaving it in makes every request its own
+     * pattern. The names are kept, matching how the query string is handled.
+     *
+     * @param parameters the segment tail starting at the first {@code ;}
+     */
+    private String normalizePathParameters(String parameters) {
+        StringBuilder masked = new StringBuilder();
+        for (String parameter : parameters.split(";", -1)) {
+            if (parameter.isEmpty()) {
+                continue;
+            }
+            int equals = parameter.indexOf('=');
+            masked.append(';')
+                    .append(equals >= 0 ? parameter.substring(0, equals) + "={val}" : parameter);
+        }
+        return masked.toString();
+    }
+
+    /** @return the placeholder for a dynamic segment, or the segment itself when it is a word */
+    private String classifySegment(String segment) {
+        if (segment.isEmpty()) {
+            return segment;
+        }
+
+        // Skip if already normalized
+        if (segment.startsWith("{") && segment.endsWith("}")) {
+            return segment;
+        }
+
+        if (NUMERIC_ID_PATTERN.matcher(segment).matches()) {
+            return "{id}";
+        }
+
+        // Before the mixed-id rule, so a token that already normalized to {token} keeps that
+        // placeholder and the url_hash of patterns captured by earlier versions does not move.
+        if (LONG_TOKEN_PATTERN.matcher(segment).matches()) {
+            return "{token}";
+        }
+
+        return isMixedId(segment) ? "{id}" : segment;
+    }
+
+    /**
+     * @return whether the segment mixes letters and digits and is long enough to be an identifier
+     *         rather than a word carrying a version or a standard's name
+     */
+    static boolean isMixedId(String segment) {
+        if (segment.length() < MIN_MIXED_ID_LENGTH) {
+            return false;
+        }
+        boolean letter = false;
+        boolean digit = false;
+        for (int i = 0; i < segment.length(); i++) {
+            char character = segment.charAt(i);
+            if (Character.isLetter(character)) {
+                letter = true;
+            } else if (Character.isDigit(character)) {
+                digit = true;
+            } else if (character != '-' && character != '_' && character != '.') {
+                // Anything else is not the shape of an identifier; leave it alone.
+                return false;
+            }
+        }
+        return letter && digit;
     }
 
     /**

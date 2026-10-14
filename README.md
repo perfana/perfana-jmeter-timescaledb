@@ -122,7 +122,7 @@ io.perfana.jmeter.timescaledb.JMeterTimescaleDBBackendListenerClient
 |-----------|---------|-------------|
 | `timescaleDBMaxPoolSize` | `10` | Maximum connections in pool |
 | `timescaleDBConnectionTimeout` | `30000` | Connection timeout (ms) |
-| `timescaleDBConnectionInitTimeout` | `60000` | Milliseconds startup keeps retrying the first connection before failing the test run. A pooler under a starting test wave can stall logins; retrying rides that out. `1` restores fail-fast. |
+| `timescaleDBConnectionInitTimeout` | `60000` | Milliseconds startup keeps retrying the first connection before failing the test run. A pooler under a starting test wave can stall logins; retrying rides that out. `1` restores fail-fast. See [Startup connection retries](#startup-connection-retries). |
 
 ### Batch Settings
 
@@ -180,6 +180,50 @@ Both settings above describe *which* transaction a sampler is stored under. How 
 See [Engine support](#engine-support) for what each engine records, with measured row counts.
 
 A sampler label of the form `transaction::sampler` overrides both, in either engine.
+
+### Startup connection retries
+
+If the database is not reachable when the test starts, `setupTest` fails and JMeter aborts the run with `IllegalStateException: Failed calling setupTest`. To ride out a database or a pooler that is still coming up, startup retries the first connection for `timescaleDBConnectionInitTimeout` milliseconds, pausing one second between attempts.
+
+**There is no attempt count to set.** The number of attempts falls out of two values, and it varies by an order of magnitude with the failure mode:
+
+| Failure mode | One attempt takes | Attempts in the default 60000 ms |
+|---|---|---|
+| Port refuses the connection | milliseconds | about 60 |
+| Host accepts, then stalls the handshake | 5s (the driver's `sslResponseTimeout`) | about 10 |
+| Host never answers at all | the full `timescaleDBConnectionTimeout`, 30s by default | **2** |
+
+That last row is the one that surprises people: `timescaleDBConnectionInitTimeout=60000` sounds like a minute of retrying, and against a silent host it is two tries. Startup says which range applies in its own log line, and each failed attempt gets a line of its own:
+
+```
+Startup will retry the first connection for up to 60000 ms, 30 s per attempt: as few as 2
+  attempt(s) if every attempt stalls for the full 30 s, up to about 60 if they fail immediately.
+TimescaleDB connection attempt 1 failed, 30041 ms of the 60000 ms startup window used,
+  retrying in 1000 ms: PSQLException: Connection attempt timed out.
+Giving up on TimescaleDB after 2 connection attempt(s) in 62085 ms (60000 ms window, 30 s per
+  attempt). Raise timescaleDBConnectionInitTimeout to retry for longer. Last failure: ...
+```
+
+Two levers, both of which widen the count:
+
+- **Raise the window.** `timescaleDBConnectionInitTimeout=300000` gives about 10 attempts over five minutes against a silent host. This is the one to reach for first.
+- **Lower the per-attempt cap.** `timescaleDBConnectionTimeout=10000` turns the default window into about 6 attempts, but it also shortens how long a flush waits for a pool connection during the run, so it is not free.
+
+Note the asymmetric naming when setting these from the command line: the **parameter** is `timescaleDBConnectionInitTimeout`, while the **JMeter property** behind its default is `timescaleConnectionInitTimeout`, with no `DB`. Every connection parameter is spelled that way (`timescaleHost` feeds `timescaleDBHost`, and so on):
+
+```bash
+jmeter -n -t plan.jmx -JtimescaleConnectionInitTimeout=300000
+```
+
+That only works if the Backend Listener in the JMX carries the argument row with the `${__P(...)}` expression. A plan saved before the parameter existed keeps its own argument list, in which case the built-in default applies and no property can change it. Either add the row, or set the value on the Backend Listener directly:
+
+```xml
+<elementProp name="timescaleDBConnectionInitTimeout" elementType="Argument">
+  <stringProp name="Argument.name">timescaleDBConnectionInitTimeout</stringProp>
+  <stringProp name="Argument.value">${__P(timescaleConnectionInitTimeout,60000)}</stringProp>
+  <stringProp name="Argument.metadata">=</stringProp>
+</elementProp>
+```
 
 ### What URL normalization masks
 

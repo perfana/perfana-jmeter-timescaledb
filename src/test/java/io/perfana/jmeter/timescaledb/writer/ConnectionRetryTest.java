@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.ServerSocket;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,6 +48,21 @@ class ConnectionRetryTest {
         long elapsed = System.currentTimeMillis() - start;
 
         assertTrue(elapsed < 2000, "Should fail on the first attempt, took " + elapsed + " ms");
+    }
+
+    @Test
+    void attemptCountDependsOnHowFastOneAttemptFails() {
+        // The WERKNL case: a 60 s window over a 30 s per-attempt cap is two tries, not "60
+        // seconds of retrying".
+        assertEquals(2, TimescaleDBWriter.fewestAttempts(60000, 30000, 1000));
+        // Raising the window is one lever.
+        assertEquals(10, TimescaleDBWriter.fewestAttempts(300000, 30000, 1000));
+        // Lowering the per-attempt cap is the other.
+        assertEquals(6, TimescaleDBWriter.fewestAttempts(60000, 10000, 1000));
+        // A port that refuses outright fails in milliseconds, so the same window buys dozens.
+        assertEquals(60, TimescaleDBWriter.fewestAttempts(60000, 0, 1000));
+        // Fail-fast still reports one attempt rather than zero.
+        assertEquals(1, TimescaleDBWriter.fewestAttempts(1, 30000, 1000));
     }
 
     private TimescaleDBConfig config(int port, String initTimeout) {

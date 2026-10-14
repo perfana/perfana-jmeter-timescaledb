@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- URL normalization now masks `;jsessionid=` and the other `;name=value` path parameters a segment can carry. A session id there is unique per user, so every request produced its own `url_patterns` row and its own one-request metric in Perfana. The parameter name is kept and the value becomes `{val}`, matching how query parameters are handled.
+- A path segment that mixes letters and digits and is at least 8 characters long is masked as `{id}`. Identifiers like Siebel's `1-q02oj1h` are not numeric, not a UUID, and far short of the 21 characters the long-token rule required, so they went through verbatim. The 8-character floor keeps real path words that carry a digit: `v1`, `v2`, `oauth2`, `html5`, `base64`, `sha256`.
+- Only the path is examined now; the scheme and host are copied through untouched. Without that, the new mixed-id rule would have masked a farm node such as `web3app0110.farm.example.com` and collapsed every node into one pattern.
+
+### Notes
+- The masking rules are now documented in the README, including which columns deliberately keep the original URL (`requests_error.url`, `url_patterns.original_example`).
+- Previously unmasked URLs get a new `url_hash`, so `url_patterns` gains one row per pattern where it used to gain one row per request. Existing `{id}`, `{uuid}` and `{token}` patterns keep their hashes: the mixed-id rule runs after the long-token rule precisely so nothing that already normalized moves.
+
 ## [1.6.0] - 2026-09-27
 
 ### Fixed

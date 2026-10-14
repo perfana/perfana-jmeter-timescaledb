@@ -181,6 +181,23 @@ See [Engine support](#engine-support) for what each engine records, with measure
 
 A sampler label of the form `transaction::sampler` overrides both, in either engine.
 
+### What URL normalization masks
+
+With `normalizeUrls=true` (default) each request URL is reduced to a pattern, stored in `url_patterns` and referenced from `requests_raw.url_hash`. Only the path and query are examined; the scheme and host are left alone, so the nodes of a farm stay distinguishable.
+
+| In the path | Becomes | Example |
+|---|---|---|
+| A UUID | `{uuid}` | `/items/550e8400-e29b-41d4-a716-446655440000` |
+| A segment of only digits | `{id}` | `/vacature-relation/58741300/save` |
+| 21+ characters, letters and digits only | `{token}` | an encoded blob |
+| 8+ characters mixing letters and digits | `{id}` | `/assignments/1-q02oj1h` |
+| A `;name=value` path parameter | `;name={val}` | `/home;jsessionid=2o84…` |
+| Every query parameter value | `name={val}` | `?a=1&b=2`, sorted by name |
+
+The eight-character floor on the mixed rule is what keeps real path words that carry a digit: `v1`, `v2`, `oauth2`, `html5`, `base64`, `sha256`. A segment that is neither of those shapes is kept verbatim, so a value this list does not describe (a date such as `2026-10-14`, say) still produces one pattern per value.
+
+`requests_error.url` and `url_patterns.original_example` deliberately keep the original, unmasked URL, so a failure can still be reproduced.
+
 ### Test plan path (`requests_raw.source_element_path`)
 
 Every request can record where in the test plan it came from — the elements enclosing it, outermost first, from the Thread Group down to the sampler itself:

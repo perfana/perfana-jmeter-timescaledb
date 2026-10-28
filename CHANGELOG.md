@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.0] - 2026-10-28
 
 ### Added
 - `scenarioNamePerThreadGroup` (default `false`): appends each sample's Thread Group to the stored `scenario_name`, so two thread groups running in parallel that use the same transaction name stop merging into one metric. Rows are keyed on `transaction_name` and `sampler_name`, and the thread group was not part of that key, so a `Login` transaction in two thread groups became one blended series. Measured on a plan with `TG_Zoeken` (2 threads) and `TG_Solliciteren` (3 threads): one `Login` row group of 10 at 1621 ms becomes 4 at 1351 ms and 6 at 1564 ms. The blend also moved whenever the thread group mix changed, which reads as a regression with no regression behind it.

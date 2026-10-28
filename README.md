@@ -213,6 +213,17 @@ With `scenarioNamePerThreadGroup=true` the stored `scenario_name` becomes `<scen
 
 The per-group `active_threads` comes from `SampleResult.getGroupThreads()`, the thread group's own count. JMeter exposes started and finished per engine only, never per thread group, so those stay `NULL` rather than carrying a derived number that would be wrong during ramp-up. A thread group also only appears once its first sample has arrived, so the first second or two of a run has the total row but no per-group rows.
 
+**Two thread groups with the same name cannot be separated**, JMeter's default `Thread Group` most of all: the suffix is the name, so both land under `<scenarioName>_Thread Group` and their rows stay merged. The listener logs a warning naming the duplicate, because nothing downstream can tell such rows from any other scenario's:
+
+```
+2 thread groups are named "Thread Group", so their samples share one scenario_name and stay
+merged into one metric despite scenarioNamePerThreadGroup=true. Their virtual user counts are
+summed, which is the concurrency behind those merged rows. Give the thread groups distinct
+names to separate them.
+```
+
+Their virtual user counts are summed rather than one group overwriting the other, so a merged scenario reports the concurrency that actually produced its rows (2 + 3 threads = peak 5). Renaming the thread groups is the fix; the names are what Perfana displays, so they are worth setting anyway.
+
 If you would rather not change `scenario_name` at all, the alternative is to make the transaction names unique in the plan (`Zoeken_Login`, `Solliciteren_Login`). That needs no setting and no listener support.
 
 ### Startup connection retries

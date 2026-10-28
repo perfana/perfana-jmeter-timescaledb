@@ -1,5 +1,6 @@
 package io.perfana.jmeter.timescaledb.util;
 
+import org.apache.jmeter.samplers.SampleResult;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -51,5 +52,35 @@ class ThreadGroupNamesTest {
     @Test
     void doesNotRepeatAGroupNamedAfterItsScenario() {
         assertEquals("Zoeken", ThreadGroupNames.scenarioNameFor("Zoeken", "Zoeken"));
+    }
+
+    @Test
+    void keyTellsIdenticallyNamedThreadGroupsApart() {
+        // Two thread groups both called "Thread Group": the name cannot separate their thread
+        // counts, but JMeter keeps the thread group's own index in the thread name.
+        assertEquals("Thread Group 1", keyOf("Thread Group 1-2"));
+        assertEquals("Thread Group 2", keyOf("Thread Group 2-1"));
+        assertEquals("Thread Group", ThreadGroupNames.nameOfKey("Thread Group 1"));
+        assertEquals("Thread Group", ThreadGroupNames.nameOfKey("Thread Group 2"));
+    }
+
+    @Test
+    void keyAndNameAgreeForAnOrdinaryGroup() {
+        assertEquals("TG_Zoeken 1", keyOf("TG_Zoeken 1-2"));
+        assertEquals("TG_Zoeken", ThreadGroupNames.nameOfKey("TG_Zoeken 1"));
+        assertEquals("TG_Zoeken", ThreadGroupNames.fromThreadName("TG_Zoeken 1-2"));
+    }
+
+    @Test
+    void keyIsNullWhenTheThreadNameHasNoSuffix() {
+        assertNull(keyOf("TimescaleDB-VU-Scheduler"));
+        assertNull(keyOf("Zoeken"));
+    }
+
+    /** Exercises keyOf through a SampleResult, the way the listener calls it. */
+    private static String keyOf(String threadName) {
+        SampleResult result = new SampleResult();
+        result.setThreadName(threadName);
+        return ThreadGroupNames.keyOf(result);
     }
 }

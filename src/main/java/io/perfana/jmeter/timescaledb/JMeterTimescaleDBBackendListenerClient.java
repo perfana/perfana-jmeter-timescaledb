@@ -33,6 +33,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -76,7 +77,15 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     // JVM-wide total, so the per-group number has to come from the samples themselves:
     // SampleResult.getGroupThreads() is the active count in that sample's thread group.
     // Only populated when scenarioNamePerThreadGroup is on.
+    //
+    // Keyed per thread group INSTANCE (ThreadGroupNames.keyOf, e.g. "Thread Group 2"), not per
+    // name: a plan may give two thread groups the same name, and keying by name would let them
+    // overwrite each other's count, reporting one group's threads as if they were all of them.
     private final Map<String, Integer> activeThreadsPerGroup = new ConcurrentHashMap<>();
+
+    // Thread group names already warned about for being shared by more than one thread group, so
+    // the warning is logged once per name instead of once per flush.
+    private final Set<String> duplicateGroupNamesWarned = ConcurrentHashMap.newKeySet();
 
     // Safety cap so snapshots from dropped phantom samples (never seen by the worker)
     // cannot grow unbounded. Only failed samples ever populate the carrier.
@@ -215,11 +224,12 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         if (!config.isScenarioNamePerThreadGroup()) {
             return config.getScenarioName();
         }
-        String threadGroup = ThreadGroupNames.of(sampleResult);
-        if (threadGroup != null) {
-            activeThreadsPerGroup.put(threadGroup, sampleResult.getGroupThreads());
+        String threadGroupKey = ThreadGroupNames.keyOf(sampleResult);
+        if (threadGroupKey != null) {
+            activeThreadsPerGroup.put(threadGroupKey, sampleResult.getGroupThreads());
         }
-        return ThreadGroupNames.scenarioNameFor(config.getScenarioName(), threadGroup);
+        return ThreadGroupNames.scenarioNameFor(
+                config.getScenarioName(), ThreadGroupNames.of(sampleResult));
     }
 
     private String gatherHeaderString(SampleResult sampleResult) {
@@ -811,24 +821,57 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
      * the samples (see {@link #scenarioNameFor}). JMeter exposes started and finished per engine,
      * never per thread group, so those stay NULL rather than carrying a number derived from a
      * high-water mark that would be wrong during ramp-up.
+     *
+     * <p>Counts are summed per scenario name, which matters when a plan gives two thread groups the
+     * same name: their request rows already merge under that one name, so the concurrency behind
+     * those rows is both groups' threads together. Reporting either group alone would describe a
+     * population that did not produce them.
      */
     private void addPerThreadGroupVirtualUsersMetrics() {
         if (!config.isScenarioNamePerThreadGroup()) {
             return;
         }
-        Instant now = Instant.now();
+        Map<String, Integer> activePerScenario = new LinkedHashMap<>();
+        Map<String, Integer> groupsPerName = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> group : activeThreadsPerGroup.entrySet()) {
+            String groupName = ThreadGroupNames.nameOfKey(group.getKey());
+            String scenarioName =
+                    ThreadGroupNames.scenarioNameFor(config.getScenarioName(), groupName);
+            activePerScenario.merge(scenarioName, group.getValue(), Integer::sum);
+            groupsPerName.merge(groupName, 1, Integer::sum);
+        }
+        warnAboutSharedThreadGroupNames(groupsPerName);
+        Instant now = Instant.now();
+        for (Map.Entry<String, Integer> scenario : activePerScenario.entrySet()) {
             writer.writeVirtualUsers(VirtualUsersRecord.builder()
                     .time(now)
                     .testRunId(config.getEffectiveRunId())
                     .systemUnderTest(config.getSystemUnderTest())
                     .testEnvironment(config.getTestEnvironment())
-                    .scenarioName(ThreadGroupNames.scenarioNameFor(
-                            config.getScenarioName(), group.getKey()))
+                    .scenarioName(scenario.getKey())
                     .location(config.getLocation())
                     .nodeName(config.getNodeName())
-                    .activeThreads(group.getValue())
+                    .activeThreads(scenario.getValue())
                     .build());
+        }
+    }
+
+    /**
+     * The suffix can only separate thread groups that are named differently, so two thread groups
+     * sharing a name still produce one merged metric. Nothing downstream can detect that, since the
+     * rows look like any other scenario's, so it is said once per offending name.
+     */
+    private void warnAboutSharedThreadGroupNames(Map<String, Integer> groupsPerName) {
+        for (Map.Entry<String, Integer> name : groupsPerName.entrySet()) {
+            if (name.getValue() > 1 && duplicateGroupNamesWarned.add(name.getKey())) {
+                log.warn("{} thread groups are named \"{}\", so their samples share one "
+                                + "scenario_name and stay merged into one metric despite {}=true. "
+                                + "Their virtual user counts are summed, which is the concurrency "
+                                + "behind those merged rows. Give the thread groups distinct names "
+                                + "to separate them.",
+                        name.getValue(), name.getKey(),
+                        TimescaleDBConfig.KEY_SCENARIO_NAME_PER_THREAD_GROUP);
+            }
         }
     }
 

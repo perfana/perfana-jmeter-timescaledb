@@ -30,6 +30,9 @@ public final class ThreadGroupNames {
     private ThreadGroupNames() {
     }
 
+    /** Only the per-thread part, leaving the thread group's own index in place. */
+    private static final Pattern THREAD_INDEX = Pattern.compile("-\\d+$");
+
     /**
      * @param sample the sample to inspect, may be {@code null}
      * @return the thread group name, or {@code null} when the thread name is absent or does not
@@ -38,6 +41,37 @@ public final class ThreadGroupNames {
      */
     public static String of(SampleResult sample) {
         return sample == null ? null : fromThreadName(sample.getThreadName());
+    }
+
+    /**
+     * Identifies one thread group within a run, as opposed to {@link #of(SampleResult)} which names
+     * it. Nothing stops a plan from giving two thread groups the same name, JMeter's default
+     * {@code Thread Group} most of all, and then the name alone cannot tell their thread counts
+     * apart. JMeter's thread name keeps the thread group's own index, so {@code Thread Group 1-2}
+     * and {@code Thread Group 2-1} yield the distinct keys {@code Thread Group 1} and
+     * {@code Thread Group 2}.
+     *
+     * @param sample the sample to inspect, may be {@code null}
+     * @return a key unique to this sample's thread group, or {@code null} when the thread name does
+     *         not carry the expected suffix
+     */
+    public static String keyOf(SampleResult sample) {
+        if (sample == null || fromThreadName(sample.getThreadName()) == null) {
+            return null;
+        }
+        return THREAD_INDEX.matcher(sample.getThreadName()).replaceFirst("").trim();
+    }
+
+    /**
+     * @param key a key from {@link #keyOf(SampleResult)}, such as {@code Thread Group 2}
+     * @return the thread group name it belongs to, such as {@code Thread Group}
+     */
+    public static String nameOfKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        int space = key.lastIndexOf(' ');
+        return space <= 0 ? key : key.substring(0, space);
     }
 
     /**

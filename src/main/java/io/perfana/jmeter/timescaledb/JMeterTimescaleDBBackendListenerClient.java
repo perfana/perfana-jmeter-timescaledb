@@ -9,6 +9,7 @@ import io.perfana.jmeter.timescaledb.model.VirtualUsersRecord;
 import io.perfana.jmeter.timescaledb.util.SampleMetadata;
 import io.perfana.jmeter.timescaledb.util.SessionVariableCarrier;
 import io.perfana.jmeter.timescaledb.util.SessionVariableFilter;
+import io.perfana.jmeter.timescaledb.util.ThreadGroupNames;
 import io.perfana.jmeter.timescaledb.util.TransactionRefs;
 import io.perfana.jmeter.timescaledb.util.UrlNormalizer;
 import io.perfana.jmeter.timescaledb.writer.TimescaleDBWriter;
@@ -32,6 +33,8 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -68,6 +71,21 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
     // every sample exactly (see TransactionRefs), which makes both the guess and the latch's
     // dependence on seeing a TC sample first (they now arrive after their samplers) unnecessary.
     private volatile boolean planUsesTransactionControllers = false;
+
+    // Last active thread count seen per thread group, for the per-thread-group virtual_users
+    // rows. The 1 s scheduler runs on its own thread, where JMeterContextService only knows the
+    // JVM-wide total, so the per-group number has to come from the samples themselves:
+    // SampleResult.getGroupThreads() is the active count in that sample's thread group.
+    // Only populated when scenarioNamePerThreadGroup is on.
+    //
+    // Keyed per thread group INSTANCE (ThreadGroupNames.keyOf, e.g. "Thread Group 2"), not per
+    // name: a plan may give two thread groups the same name, and keying by name would let them
+    // overwrite each other's count, reporting one group's threads as if they were all of them.
+    private final Map<String, Integer> activeThreadsPerGroup = new ConcurrentHashMap<>();
+
+    // Thread group names already warned about for being shared by more than one thread group, so
+    // the warning is logged once per name instead of once per flush.
+    private final Set<String> duplicateGroupNamesWarned = ConcurrentHashMap.newKeySet();
 
     // Safety cap so snapshots from dropped phantom samples (never seen by the worker)
     // cannot grow unbounded. Only failed samples ever populate the carrier.
@@ -193,6 +211,25 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             parent = parent.getParent();
         }
         return false;
+    }
+
+    /**
+     * The scenario name to store for this sample's rows: the configured one, or that name with the
+     * sample's thread group appended when {@code scenarioNamePerThreadGroup} is on.
+     *
+     * <p>Also records the thread group's active thread count, so the virtual users scheduler can
+     * write a row per thread group under the same name these rows use.
+     */
+    private String scenarioNameFor(SampleResult sampleResult) {
+        if (!config.isScenarioNamePerThreadGroup()) {
+            return config.getScenarioName();
+        }
+        String threadGroupKey = ThreadGroupNames.keyOf(sampleResult);
+        if (threadGroupKey != null) {
+            activeThreadsPerGroup.put(threadGroupKey, sampleResult.getGroupThreads());
+        }
+        return ThreadGroupNames.scenarioNameFor(
+                config.getScenarioName(), ThreadGroupNames.of(sampleResult));
     }
 
     private String gatherHeaderString(SampleResult sampleResult) {
@@ -342,6 +379,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
             boolean engineLinksTransactions = TransactionRefs.linksTransactions(sampleResult);
             SampleNames names = determineNames(sampleResult, config.isFlattenNestedTransactions());
+            String scenarioName = scenarioNameFor(sampleResult);
 
             // Skip leaves whose Transaction Controller could not be attributed in a plan that
             // uses them: a broken parent chain, already counted by the TC's transaction row.
@@ -386,7 +424,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                     .testRunId(config.getEffectiveRunId())
                     .systemUnderTest(config.getSystemUnderTest())
                     .testEnvironment(config.getTestEnvironment())
-                    .scenarioName(config.getScenarioName())
+                    .scenarioName(scenarioName)
                     .location(config.getLocation())
                     .transactionName(names.transactionName)
                     .samplerName(names.samplerName)
@@ -410,7 +448,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             // already produced the transaction row).
             TransactionRecord standaloneTransaction =
                     standaloneTransactionRecord(sampleResult, names.transactionName, config,
-                            planUsesTransactionControllers, engineLinksTransactions);
+                            scenarioName, planUsesTransactionControllers, engineLinksTransactions);
             if (standaloneTransaction != null) {
                 transactionRecords.add(standaloneTransaction);
             }
@@ -426,7 +464,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                         .testRunId(config.getEffectiveRunId())
                         .systemUnderTest(config.getSystemUnderTest())
                         .testEnvironment(config.getTestEnvironment())
-                        .scenarioName(config.getScenarioName())
+                        .scenarioName(scenarioName)
                         .location(config.getLocation())
                         .nodeName(config.getNodeName())
                         .transactionName(names.transactionName)
@@ -455,13 +493,14 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
 
             String transactionName = sampleResult.getSampleLabel();
             Instant timestamp = Instant.ofEpochMilli(sampleResult.getEndTime());
+            String scenarioName = scenarioNameFor(sampleResult);
 
             TransactionRecord transactionRecord = TransactionRecord.builder()
                     .time(timestamp)
                     .testRunId(config.getEffectiveRunId())
                     .systemUnderTest(config.getSystemUnderTest())
                     .testEnvironment(config.getTestEnvironment())
-                    .scenarioName(config.getScenarioName())
+                    .scenarioName(scenarioName)
                     .location(config.getLocation())
                     .transactionName(transactionName)
                     .success(sampleResult.isSuccessful())
@@ -553,10 +592,14 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
      * <p>An engine that links samples to their transaction needs none of that guesswork: the sample
      * says whether it ran inside one, so a standalone sampler keeps its single-step transaction row
      * even in a plan that is full of Transaction Controllers.
+     *
+     * @param scenarioName the scenario name this sampler's rows use, so the transaction row it
+     *                     stands for lands under the same scenario as its request row
      */
     static TransactionRecord standaloneTransactionRecord(SampleResult sampler,
                                                          String transactionName,
                                                          TimescaleDBConfig config,
+                                                         String scenarioName,
                                                          boolean planUsesTransactionControllers,
                                                          boolean engineLinksTransactions) {
         if (engineLinksTransactions
@@ -569,7 +612,7 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                 .testRunId(config.getEffectiveRunId())
                 .systemUnderTest(config.getSystemUnderTest())
                 .testEnvironment(config.getTestEnvironment())
-                .scenarioName(config.getScenarioName())
+                .scenarioName(scenarioName)
                 .location(config.getLocation())
                 .transactionName(transactionName)
                 .success(sampler.isSuccessful())
@@ -627,6 +670,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
         // Test plan path capture parameters
         arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SOURCE_ELEMENT_PATH, "${__P(saveSourceElementPath," + TimescaleDBConfig.DEFAULT_SAVE_SOURCE_ELEMENT_PATH + ")}");
 
+        // Per-thread-group scenario naming
+        arguments.addArgument(TimescaleDBConfig.KEY_SCENARIO_NAME_PER_THREAD_GROUP, "${__P(scenarioNamePerThreadGroup," + TimescaleDBConfig.DEFAULT_SCENARIO_NAME_PER_THREAD_GROUP + ")}");
+
         // Session variable capture parameters
         arguments.addArgument(TimescaleDBConfig.KEY_SAVE_SESSION_VARIABLES, "${__P(saveSessionVariables," + TimescaleDBConfig.DEFAULT_SAVE_SESSION_VARIABLES + ")}");
         // Empty __P default on purpose: the allow-list contains commas, which __P would parse
@@ -654,6 +700,12 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             if (config.isNormalizeUrls()) {
                 urlNormalizer = new UrlNormalizer();
                 log.info("URL normalization enabled");
+            }
+
+            if (config.isScenarioNamePerThreadGroup()) {
+                log.info("scenario_name will carry the thread group of each sample, so two thread "
+                        + "groups sharing a transaction name stay separate metrics. The test run id "
+                        + "is unaffected.");
             }
 
             if (config.isSaveSessionVariables() && config.getSessionVariablesInclude().isEmpty()) {
@@ -720,7 +772,9 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
                 scheduler.shutdown();
 
                 // Record final virtual users metrics
+                activeThreadsPerGroup.replaceAll((group, active) -> 0);
                 addVirtualUsersMetrics(0, 0, JMeterContextService.getThreadCounts().finishedThreads);
+                addPerThreadGroupVirtualUsersMetrics();
 
                 if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
                     log.warn("The scheduler did not terminate within the specified timeout.");
@@ -750,8 +804,73 @@ public class JMeterTimescaleDBBackendListenerClient extends AbstractBackendListe
             try {
                 ThreadCounts tc = JMeterContextService.getThreadCounts();
                 addVirtualUsersMetrics(tc.activeThreads, tc.startedThreads, tc.finishedThreads);
+                addPerThreadGroupVirtualUsersMetrics();
             } catch (Exception e) {
                 log.error("Failed writing virtual users metrics to TimescaleDB", e);
+            }
+        }
+    }
+
+    /**
+     * Writes one extra virtual users row per thread group when scenario names are per thread group,
+     * so each suffixed scenario has a concurrency series of its own. The JVM-wide row above is
+     * still written under the unsuffixed scenario name, so anything already reading virtual_users
+     * keeps the series it has.
+     *
+     * <p>Only {@code active_threads} is real here: it is the thread group's own count, taken from
+     * the samples (see {@link #scenarioNameFor}). JMeter exposes started and finished per engine,
+     * never per thread group, so those stay NULL rather than carrying a number derived from a
+     * high-water mark that would be wrong during ramp-up.
+     *
+     * <p>Counts are summed per scenario name, which matters when a plan gives two thread groups the
+     * same name: their request rows already merge under that one name, so the concurrency behind
+     * those rows is both groups' threads together. Reporting either group alone would describe a
+     * population that did not produce them.
+     */
+    private void addPerThreadGroupVirtualUsersMetrics() {
+        if (!config.isScenarioNamePerThreadGroup()) {
+            return;
+        }
+        Map<String, Integer> activePerScenario = new LinkedHashMap<>();
+        Map<String, Integer> groupsPerName = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> group : activeThreadsPerGroup.entrySet()) {
+            String groupName = ThreadGroupNames.nameOfKey(group.getKey());
+            String scenarioName =
+                    ThreadGroupNames.scenarioNameFor(config.getScenarioName(), groupName);
+            activePerScenario.merge(scenarioName, group.getValue(), Integer::sum);
+            groupsPerName.merge(groupName, 1, Integer::sum);
+        }
+        warnAboutSharedThreadGroupNames(groupsPerName);
+        Instant now = Instant.now();
+        for (Map.Entry<String, Integer> scenario : activePerScenario.entrySet()) {
+            writer.writeVirtualUsers(VirtualUsersRecord.builder()
+                    .time(now)
+                    .testRunId(config.getEffectiveRunId())
+                    .systemUnderTest(config.getSystemUnderTest())
+                    .testEnvironment(config.getTestEnvironment())
+                    .scenarioName(scenario.getKey())
+                    .location(config.getLocation())
+                    .nodeName(config.getNodeName())
+                    .activeThreads(scenario.getValue())
+                    .build());
+        }
+    }
+
+    /**
+     * The suffix can only separate thread groups that are named differently, so two thread groups
+     * sharing a name still produce one merged metric. Nothing downstream can detect that, since the
+     * rows look like any other scenario's, so it is said once per offending name.
+     */
+    private void warnAboutSharedThreadGroupNames(Map<String, Integer> groupsPerName) {
+        for (Map.Entry<String, Integer> name : groupsPerName.entrySet()) {
+            if (name.getValue() > 1 && duplicateGroupNamesWarned.add(name.getKey())) {
+                log.warn("{} thread groups are named \"{}\", so their samples share one "
+                                + "scenario_name and stay merged into one metric despite {}=true. "
+                                + "Their virtual user counts are summed, which is the concurrency "
+                                + "behind those merged rows. Give the thread groups distinct names "
+                                + "to separate them.",
+                        name.getValue(), name.getKey(),
+                        TimescaleDBConfig.KEY_SCENARIO_NAME_PER_THREAD_GROUP);
             }
         }
     }

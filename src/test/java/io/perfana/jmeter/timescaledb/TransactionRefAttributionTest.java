@@ -114,7 +114,7 @@ public class TransactionRefAttributionTest {
         // genuine standalone. The reference can, so the leaf is kept and gets its own transaction
         // row even though the run has seen Transaction Controller samples.
         assertFalse(isDetachedFromTransactionController(names, true, true));
-        assertNotNull(standaloneTransactionRecord(leaf, names.transactionName, config(), true, true),
+        assertNotNull(standaloneTransactionRecord(leaf, names.transactionName, config(), "loadTest", true, true),
                 "a sampler the engine says ran outside any transaction must still produce a transaction row");
     }
 
@@ -122,7 +122,7 @@ public class TransactionRefAttributionTest {
     void attributedSamplerProducesNoStandaloneTransactionRow() {
         SampleResult leaf = sample("POST /pay").inside(new FakeTransactionRef("Checkout"));
 
-        assertNull(standaloneTransactionRecord(leaf, "Checkout", config(), false, true),
+        assertNull(standaloneTransactionRecord(leaf, "Checkout", config(), "loadTest", false, true),
                 "the Transaction Controller already produced the transaction row");
     }
 
@@ -168,6 +168,6 @@ public class TransactionRefAttributionTest {
         assertEquals("POST /pay", names.samplerName);
         // Not inside a transaction as far as the engine is concerned, so the row the "::" label
         // names is still the only place this sampler is counted.
-        assertNotNull(standaloneTransactionRecord(leaf, names.transactionName, config(), true, true));
+        assertNotNull(standaloneTransactionRecord(leaf, names.transactionName, config(), "loadTest", true, true));
     }
 }

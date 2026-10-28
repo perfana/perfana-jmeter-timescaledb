@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `scenarioNamePerThreadGroup` (default `false`): appends each sample's Thread Group to the stored `scenario_name`, so two thread groups running in parallel that use the same transaction name stop merging into one metric. Rows are keyed on `transaction_name` and `sampler_name`, and the thread group was not part of that key, so a `Login` transaction in two thread groups became one blended series. Measured on a plan with `TG_Zoeken` (2 threads) and `TG_Solliciteren` (3 threads): one `Login` row group of 10 at 1621 ms becomes 4 at 1351 ms and 6 at 1564 ms. The blend also moved whenever the thread group mix changed, which reads as a regression with no regression behind it.
+- With that setting on, `virtual_users` gains one series per thread group beside the existing JVM-wide row, so a suffixed scenario has its own concurrency graph. `active_threads` comes from `SampleResult.getGroupThreads()`; `started_threads` and `finished_threads` stay `NULL`, since JMeter exposes those per engine only and a derived figure would be wrong during ramp-up. Per-group peaks sum to the total peak (2 + 3 = 5, verified).
+- Off by default on purpose: turning it on re-labels `scenario_name`, so existing Perfana series for that scenario do not continue into the suffixed name.
+
+### Notes
+- `test_run_id` is never suffixed. In synthetic monitoring mode the scenario name is the run id (`getEffectiveRunId()`), so suffixing it would split one run into one run per thread group.
+- The thread group is read from the sample's thread name (`TG_Zoeken 1-2`): nothing else on a `SampleResult` names it, and the listener's worker thread is not a sampler thread, so it has no JMeter context to ask. Transaction Controller samples carry the thread name too, which is why `transactions` can be suffixed and not just `requests_raw`. A thread name without the `<group>-<thread>` suffix leaves the scenario name unchanged rather than guessing a group.
+- The alternative needing no setting is to make the transaction names unique in the plan (`Zoeken_Login`, `Solliciteren_Login`).
+
 ## [1.7.0] - 2026-10-14
 
 ### Added

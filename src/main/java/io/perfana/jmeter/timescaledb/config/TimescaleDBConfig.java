@@ -57,6 +57,9 @@ public class TimescaleDBConfig {
     // Test plan path capture settings
     private boolean saveSourceElementPath;
 
+    // Per-thread-group scenario naming
+    private boolean scenarioNamePerThreadGroup;
+
     // Session variable capture settings
     private boolean saveSessionVariables;
     private List<Pattern> sessionVariablesInclude;
@@ -88,6 +91,7 @@ public class TimescaleDBConfig {
     public static final String KEY_NORMALIZE_URLS = "normalizeUrls";
     public static final String KEY_FLATTEN_NESTED_TRANSACTIONS = "flattenNestedTransactions";
     public static final String KEY_SAVE_SOURCE_ELEMENT_PATH = "saveSourceElementPath";
+    public static final String KEY_SCENARIO_NAME_PER_THREAD_GROUP = "scenarioNamePerThreadGroup";
     public static final String KEY_SAVE_SESSION_VARIABLES = "saveSessionVariables";
     public static final String KEY_SESSION_VARIABLES_INCLUDE = "sessionVariablesInclude";
     public static final String KEY_SESSION_VARIABLES_MAX_VALUE_LENGTH = "sessionVariablesMaxValueLength";
@@ -120,6 +124,8 @@ public class TimescaleDBConfig {
     public static final String DEFAULT_NORMALIZE_URLS = "true";
     public static final String DEFAULT_FLATTEN_NESTED_TRANSACTIONS = "true";
     public static final String DEFAULT_SAVE_SOURCE_ELEMENT_PATH = "false";
+    /** Off: turning it on re-labels scenario_name, which moves every existing Perfana series. */
+    public static final String DEFAULT_SCENARIO_NAME_PER_THREAD_GROUP = "false";
     public static final String DEFAULT_SAVE_SESSION_VARIABLES = "false";
     /** Empty: capture is opt-in per variable, so an unconfigured run stores nothing. */
     public static final String DEFAULT_SESSION_VARIABLES_INCLUDE = "";
@@ -173,6 +179,8 @@ public class TimescaleDBConfig {
         // Mode settings
         config.syntheticMonitoring = Boolean.parseBoolean(context.getParameter(KEY_SYNTHETIC_MONITORING, DEFAULT_SYNTHETIC_MONITORING));
         config.scenarioName = context.getParameter(KEY_SCENARIO_NAME, DEFAULT_SCENARIO_NAME);
+        config.scenarioNamePerThreadGroup = Boolean.parseBoolean(context.getParameter(
+                KEY_SCENARIO_NAME_PER_THREAD_GROUP, DEFAULT_SCENARIO_NAME_PER_THREAD_GROUP));
 
         // Data capture settings
         config.saveResponseBody = Boolean.parseBoolean(context.getParameter(KEY_SAVE_RESPONSE_BODY, DEFAULT_SAVE_RESPONSE_BODY));
@@ -330,6 +338,17 @@ public class TimescaleDBConfig {
 
     public boolean isNormalizeUrls() {
         return normalizeUrls;
+    }
+
+    /**
+     * Whether the stored {@code scenario_name} gets the sample's thread group appended, so two
+     * thread groups that use the same transaction name stop merging into one metric.
+     *
+     * <p>Deliberately not applied to {@link #getEffectiveRunId()}: in synthetic monitoring mode the
+     * scenario name is the run id, and suffixing that would split one run into one per thread group.
+     */
+    public boolean isScenarioNamePerThreadGroup() {
+        return scenarioNamePerThreadGroup;
     }
 
     public boolean isFlattenNestedTransactions() {

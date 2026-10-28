@@ -151,6 +151,7 @@ io.perfana.jmeter.timescaledb.JMeterTimescaleDBBackendListenerClient
 | `responseBodyMaxLength` | `16384` | Characters of an error response body kept per failed sample; the rest is dropped with a marker. Bodies are only collected for failures, so the cost arrives all at once when the system under test starts failing. |
 | `normalizeUrls` | `true` | Enable URL normalization |
 | `flattenNestedTransactions` | `true` | Flatten nested parallel controllers into the outermost transaction (see below) |
+| `scenarioNamePerThreadGroup` | `false` | Append each sample's Thread Group to the stored `scenario_name`, so two thread groups sharing a transaction name stay separate metrics (see [below](#multiple-thread-groups)) |
 
 All parameters support JMeter property substitution: `${__P(propertyName,defaultValue)}`
 
@@ -180,6 +181,39 @@ Both settings above describe *which* transaction a sampler is stored under. How 
 See [Engine support](#engine-support) for what each engine records, with measured row counts.
 
 A sampler label of the form `transaction::sampler` overrides both, in either engine.
+
+### Multiple thread groups
+
+Rows are grouped by `transaction_name` and `sampler_name`; the thread group a sample came from is not part of the key. So two thread groups running in parallel that use the **same** transaction name have their rows merged into one metric, and `scenario_name` cannot separate them either, because it is one configured value for the whole JMeter JVM.
+
+That merge is usually unwanted. Measured on a plan with `TG_Zoeken` (2 threads) and `TG_Solliciteren` (3 threads), each with its own `Login` transaction:
+
+| | `scenario_name` | `transaction_name` | rows | avg ms |
+|---|---|---|---|---|
+| default | `T_WNL_Combi` | `Login` | 10 | 1621 |
+| `scenarioNamePerThreadGroup=true` | `T_WNL_Combi_TG_Zoeken` | `Login` | 4 | 1351 |
+| `scenarioNamePerThreadGroup=true` | `T_WNL_Combi_TG_Solliciteren` | `Login` | 6 | 1564 |
+
+The blended 1621 ms hides two populations that differ by 200 ms, and the blend moves whenever the thread group mix changes, for instance if one ramps differently, even though neither transaction got slower.
+
+With `scenarioNamePerThreadGroup=true` the stored `scenario_name` becomes `<scenarioName>_<thread group name>` on `requests_raw`, `transactions` and `requests_error`. Notes:
+
+- **`test_run_id` is never suffixed.** In synthetic monitoring mode the scenario name *is* the run id, so suffixing it would split one run into one run per thread group.
+- **Turning it on re-labels `scenario_name`,** so existing Perfana series for that scenario do not continue into the new name. That is why it is off by default. Decide once per test, not per run.
+- A thread group named exactly after its scenario is not repeated: `Zoeken` + `Zoeken` stays `Zoeken`.
+- The thread group is read from the sample's thread name (`TG_Zoeken 1-2`), since nothing else on a `SampleResult` names it and the listener's worker thread has no JMeter context. A thread name without that `<group>-<thread>` suffix leaves the scenario name unsuffixed rather than guessing.
+
+**`virtual_users` gains a series per thread group,** alongside the existing JVM-wide row under the unsuffixed name, so anything already reading it keeps the series it has:
+
+| `scenario_name` | `active_threads` | `started_threads` / `finished_threads` |
+|---|---|---|
+| `T_WNL_Combi` | 5 (JVM-wide) | populated |
+| `T_WNL_Combi_TG_Zoeken` | 2 | `NULL` |
+| `T_WNL_Combi_TG_Solliciteren` | 3 | `NULL` |
+
+The per-group `active_threads` comes from `SampleResult.getGroupThreads()`, the thread group's own count. JMeter exposes started and finished per engine only, never per thread group, so those stay `NULL` rather than carrying a derived number that would be wrong during ramp-up. A thread group also only appears once its first sample has arrived, so the first second or two of a run has the total row but no per-group rows.
+
+If you would rather not change `scenario_name` at all, the alternative is to make the transaction names unique in the plan (`Zoeken_Login`, `Solliciteren_Login`). That needs no setting and no listener support.
 
 ### Startup connection retries
 

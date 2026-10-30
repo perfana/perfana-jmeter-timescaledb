@@ -102,9 +102,28 @@ class ThreadGroupNamesTest {
     }
 
     @Test
-    void doesNotStripAHostThatIsNotConfigured() {
-        assertEquals("10.9.9.9:1099-Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+    void stripsAnAddressWithAPortEvenWhenTheHostListCannotConfirmIt() {
+        // remote_hosts may be unset by the time this runs, or -R may be given a host name while
+        // the thread name carries the resolved address. "<address>:<port>-" is conclusive anyway:
+        // a standalone run never puts that in a thread name.
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.178.135.133:1093-Zoeken", List.of()));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
                 "10.9.9.9:1099-Zoeken", List.of("10.0.0.1")));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "uwva3vwpapp0109:1093-Zoeken", List.of("10.178.135.133")));
+    }
+
+    @Test
+    void doesNotMistakeAThreadGroupNameForAnAddress() {
+        // No port, and not a configured host, so nothing is stripped.
+        assertEquals("order-entry", ThreadGroupNames.withoutRemoteHostPrefix(
+                "order-entry", List.of("10.0.0.1")));
+        assertEquals("10 of 20-Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10 of 20-Zoeken", List.of("10.0.0.1")));
+        // A colon with no digits after it is not an address either.
+        assertEquals("stage:prod-Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "stage:prod-Zoeken", List.of()));
     }
 
     @Test

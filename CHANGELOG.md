@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.2] - 2026-10-30
+
+### Fixed
+- The load generator's address could still reach `scenario_name` on a distributed run. 1.8.1 recognised the prefix only by matching the configured `remote_hosts`, which is not always enough: that property can be unset by the time the listener reads it, and `-R` may be given a host name while the thread name carries the address it resolved to, or the reverse. An `<address>:<port>-` prefix is now stripped on its own evidence, whatever the configuration says, because a standalone run never puts that shape in a thread name.
+- A thread group name is still left alone when it only looks similar: `order-entry`, `10 of 20-Zoeken` and `stage:prod-Zoeken` are untouched, since the rule needs host characters followed by a colon, digits and a dash.
+
+### Notes
+- Verified on stock Apache JMeter 5.6.3 in two-JVM distributed runs with both `-R 127.0.0.1:1099` and `-R 127.0.0.1`; `scenario_name` comes out as `<scenarioName>_<thread group>` in both.
+- Only affects runs with `scenarioNamePerThreadGroup=true`, which is off by default.
+
 ## [1.8.1] - 2026-10-30
 
 ### Fixed

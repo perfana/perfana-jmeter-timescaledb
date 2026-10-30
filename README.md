@@ -48,11 +48,11 @@ The third row is not a supported configuration. If you cannot upgrade the engine
 The listener logs which of the two attributions is active at startup, along with its own version:
 
 ```
-Setting up Perfana JMeter TimescaleDB Backend Listener 1.8.1...
+Setting up Perfana JMeter TimescaleDB Backend Listener 1.8.2...
 This engine links each sample to its Transaction Controller; samplers are attributed by reference.
 ```
 
-Check both lines before trusting a run. `lib/ext` is scanned alphabetically, so an older copy of this jar left in place silently wins over a newer one: `perfana-jmeter-timescaledb-1.3.1-all.jar` shadows `-1.8.1-all.jar`. Delete the old jar rather than adding the new one beside it.
+Check both lines before trusting a run. `lib/ext` is scanned alphabetically, so an older copy of this jar left in place silently wins over a newer one: `perfana-jmeter-timescaledb-1.3.1-all.jar` shadows `-1.8.2-all.jar`. Delete the old jar rather than adding the new one beside it.
 
 ## Installation
 
@@ -65,18 +65,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.8.1</version>
+    <version>1.8.2</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.8.1'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.8.2'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.8.1-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.8.2-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Distribution
 
@@ -214,7 +214,7 @@ With `scenarioNamePerThreadGroup=true` the stored `scenario_name` becomes `<scen
 
 The per-group `active_threads` comes from `SampleResult.getGroupThreads()`, the thread group's own count. JMeter exposes started and finished per engine only, never per thread group, so those stay `NULL` rather than carrying a derived number that would be wrong during ramp-up. A thread group also only appears once its first sample has arrived, so the first second or two of a run has the total row but no per-group rows.
 
-**A distributed run does not group by load generator.** On a remote engine JMeter names its threads `<host>-<thread group> <group>-<thread>`, so the thread group arrives as `10.0.0.1:1099-Zoeken`. That address is stripped, matched against the configured `remote_hosts` with the port optional, so one thread group is one scenario no matter how many generators ran it. A thread group genuinely named `order-entry` keeps its name, and an address that is not a configured remote host is left alone. Which generator a sample came from is already in `node_name` and `location`.
+**A distributed run does not group by load generator.** On a remote engine JMeter names its threads `<host>-<thread group> <group>-<thread>`, so the thread group arrives as `10.0.0.1:1099-Zoeken`. That address is stripped, so one thread group is one scenario no matter how many generators ran it. It is recognised two ways: by matching the configured `remote_hosts` (with the port optional, since JMeter drops it from that property but keeps it in the thread name), and failing that by the `<address>:<port>-` shape itself, which a standalone run never produces. The second rule covers a `remote_hosts` that is unset by then, and a `-R` given a host name while the thread name carries the resolved address. A thread group genuinely named `order-entry` keeps its name, and an address that is not a configured remote host is left alone. Which generator a sample came from is already in `node_name` and `location`.
 
 Thread counts are still tracked per generator internally and summed into that one scenario, so a thread group spread over four engines reports its total concurrency rather than one engine's.
 

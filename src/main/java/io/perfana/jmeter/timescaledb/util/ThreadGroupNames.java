@@ -125,8 +125,25 @@ public final class ThreadGroupNames {
                 return group.substring(prefix.end());
             }
         }
+        // The configured hosts are not always enough to recognise the prefix: remote_hosts can be
+        // unset by the time this runs, and -R may be given a host name while the thread name
+        // carries the address it resolved to, or the reverse. An "<address>:<port>-" prefix is
+        // conclusive on its own though, because a standalone run never puts one in a thread name,
+        // so strip that shape whatever the configuration says.
+        Matcher addressed = ADDRESS_WITH_PORT_PREFIX.matcher(group);
+        if (addressed.find() && addressed.end() < group.length()) {
+            return group.substring(addressed.end());
+        }
         return group;
     }
+
+    /**
+     * A leading {@code <host>:<port>-}, the shape a distributed run puts in front of the thread
+     * group name. Host characters only, so a thread group named {@code order-entry} or
+     * {@code 10 of 20} is untouched, and the port is bounded to the real range's width.
+     */
+    private static final Pattern ADDRESS_WITH_PORT_PREFIX =
+            Pattern.compile("^[A-Za-z0-9._-]+:\\d{1,5}-");
 
     private static String hostWithoutPort(String host) {
         int colon = host.lastIndexOf(':');

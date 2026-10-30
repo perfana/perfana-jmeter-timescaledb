@@ -214,6 +214,10 @@ With `scenarioNamePerThreadGroup=true` the stored `scenario_name` becomes `<scen
 
 The per-group `active_threads` comes from `SampleResult.getGroupThreads()`, the thread group's own count. JMeter exposes started and finished per engine only, never per thread group, so those stay `NULL` rather than carrying a derived number that would be wrong during ramp-up. A thread group also only appears once its first sample has arrived, so the first second or two of a run has the total row but no per-group rows.
 
+**A distributed run does not group by load generator.** On a remote engine JMeter names its threads `<host>-<thread group> <group>-<thread>`, so the thread group arrives as `10.0.0.1:1099-Zoeken`. That address is stripped, matched against the configured `remote_hosts` with the port optional, so one thread group is one scenario no matter how many generators ran it. A thread group genuinely named `order-entry` keeps its name, and an address that is not a configured remote host is left alone. Which generator a sample came from is already in `node_name` and `location`.
+
+Thread counts are still tracked per generator internally and summed into that one scenario, so a thread group spread over four engines reports its total concurrency rather than one engine's.
+
 **Two thread groups with the same name cannot be separated**, JMeter's default `Thread Group` most of all: the suffix is the name, so both land under `<scenarioName>_Thread Group` and their rows stay merged. The listener logs a warning naming the duplicate, because nothing downstream can tell such rows from any other scenario's:
 
 ```

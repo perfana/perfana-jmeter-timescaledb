@@ -3,6 +3,8 @@ package io.perfana.jmeter.timescaledb.util;
 import org.apache.jmeter.samplers.SampleResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -75,6 +77,72 @@ class ThreadGroupNamesTest {
     void keyIsNullWhenTheThreadNameHasNoSuffix() {
         assertNull(keyOf("TimescaleDB-VU-Scheduler"));
         assertNull(keyOf("Zoeken"));
+    }
+
+    @Test
+    void stripsTheLoadGeneratorAddressADistributedRunPutsInFront() {
+        // A remote engine names its threads "<host>-<thread group> <group>-<thread>". Left in, one
+        // thread group becomes a different scenario on every generator.
+        List<String> hosts = List.of("10.0.0.1:1099", "10.0.0.2:1099");
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix("10.0.0.1:1099-Zoeken", hosts));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix("10.0.0.2:1099-Zoeken", hosts));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix("Zoeken", hosts));
+    }
+
+    @Test
+    void matchesWhetherOrNotEitherSideCarriesThePort() {
+        // JMeter drops the port from remote_hosts but keeps it in the thread name, so the two
+        // spellings disagree and both have to match.
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.0.0.1:1099-Zoeken", List.of("10.0.0.1")));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.0.0.1-Zoeken", List.of("10.0.0.1:1099")));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.0.0.1:1099-Zoeken", List.of("10.0.0.1:1099")));
+    }
+
+    @Test
+    void doesNotStripAHostThatIsNotConfigured() {
+        assertEquals("10.9.9.9:1099-Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.9.9.9:1099-Zoeken", List.of("10.0.0.1")));
+    }
+
+    @Test
+    void keepsAThreadGroupNameThatMerelyContainsADash() {
+        // Cutting at the first dash would mangle this; matching the configured hosts does not.
+        List<String> hosts = List.of("10.0.0.1");
+        assertEquals("order-entry", ThreadGroupNames.withoutRemoteHostPrefix("order-entry", hosts));
+        assertEquals("order-entry",
+                ThreadGroupNames.withoutRemoteHostPrefix("10.0.0.1-order-entry", hosts));
+    }
+
+    @Test
+    void stripsOnlyOnePrefixEvenWhenTheGroupStartsWithTheHostName() {
+        List<String> hosts = List.of("web01");
+        assertEquals("web01-foo", ThreadGroupNames.withoutRemoteHostPrefix("web01-web01-foo", hosts));
+    }
+
+    @Test
+    void theVirtualUsersKeySeparatesGeneratorsButItsNameDoesNot() {
+        // Two engines running the same thread group must be counted separately and then reported
+        // under one scenario name, which is the concurrency of that thread group across the run.
+        assertEquals("10.0.0.1:1099-Zoeken 1", keyOf("10.0.0.1:1099-Zoeken 1-2"));
+        assertEquals("10.0.0.2:1099-Zoeken 1", keyOf("10.0.0.2:1099-Zoeken 1-2"));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix(
+                "10.0.0.1:1099-Zoeken", List.of("10.0.0.1:1099", "10.0.0.2:1099")));
+    }
+
+    @Test
+    void standaloneRunsHaveNoHostsToStrip() {
+        assertEquals(List.of(), ThreadGroupNames.parseHosts(""));
+        assertEquals(List.of(), ThreadGroupNames.parseHosts(null));
+        assertEquals("Zoeken", ThreadGroupNames.withoutRemoteHostPrefix("Zoeken", List.of()));
+    }
+
+    @Test
+    void parsesTheRemoteHostsProperty() {
+        assertEquals(List.of("10.0.0.1:1099", "10.0.0.2:1099"),
+                ThreadGroupNames.parseHosts(" 10.0.0.1:1099 , 10.0.0.2:1099 "));
     }
 
     /** Exercises keyOf through a SampleResult, the way the listener calls it. */

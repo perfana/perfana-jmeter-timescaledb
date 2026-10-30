@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.1] - 2026-10-30
+
+### Fixed
+- `scenarioNamePerThreadGroup=true` put the load generator's address in the scenario name on a distributed run: a remote engine names its threads `<host>-<thread group> <group>-<thread>`, so the thread group arrived as `10.0.0.1:1099-Zoeken` and the scenario became `<scenarioName>_10.0.0.1:1099-Zoeken`. With more than one generator a single thread group fragmented into one scenario per generator, which is never what grouping by thread group means. The address is now stripped. Grouping by load generator was never intended; `node_name` and `location` already carry that.
+- The address is matched against the configured `remote_hosts`, with the port optional on either side, because JMeter drops the port from that property but keeps it in the thread name (`remote_hosts=10.0.0.1` against the prefix `10.0.0.1:1099-`). Matching the configured hosts rather than cutting at the first dash leaves a thread group genuinely named `order-entry` alone, and an address that is not a configured host untouched.
+- Virtual user counts stay keyed per generator internally and are summed into the one scenario, so a thread group spread over several engines reports its total concurrency instead of one engine's.
+
+### Notes
+- 1.8.0 was only ever tested standalone, where the thread name carries no host, which is why this reached a release. Verified now in a two-JVM distributed run on stock Apache JMeter 5.6.3 with `-R 127.0.0.1:1099`.
+- Only affects runs with `scenarioNamePerThreadGroup=true`, which is off by default.
+
 ## [1.8.0] - 2026-10-28
 
 ### Added

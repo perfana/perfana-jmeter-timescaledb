@@ -48,11 +48,11 @@ The third row is not a supported configuration. If you cannot upgrade the engine
 The listener logs which of the two attributions is active at startup, along with its own version:
 
 ```
-Setting up Perfana JMeter TimescaleDB Backend Listener 1.8.0...
+Setting up Perfana JMeter TimescaleDB Backend Listener 1.8.1...
 This engine links each sample to its Transaction Controller; samplers are attributed by reference.
 ```
 
-Check both lines before trusting a run. `lib/ext` is scanned alphabetically, so an older copy of this jar left in place silently wins over a newer one: `perfana-jmeter-timescaledb-1.3.1-all.jar` shadows `-1.8.0-all.jar`. Delete the old jar rather than adding the new one beside it.
+Check both lines before trusting a run. `lib/ext` is scanned alphabetically, so an older copy of this jar left in place silently wins over a newer one: `perfana-jmeter-timescaledb-1.3.1-all.jar` shadows `-1.8.1-all.jar`. Delete the old jar rather than adding the new one beside it.
 
 ## Installation
 
@@ -65,18 +65,18 @@ Add the dependency to your build tool:
 <dependency>
     <groupId>io.perfana</groupId>
     <artifactId>perfana-jmeter-timescaledb</artifactId>
-    <version>1.8.0</version>
+    <version>1.8.1</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.perfana:perfana-jmeter-timescaledb:1.8.0'
+implementation 'io.perfana:perfana-jmeter-timescaledb:1.8.1'
 ```
 
 ### Manual Installation
 
-Download the fat JAR (`perfana-jmeter-timescaledb-1.8.0-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
+Download the fat JAR (`perfana-jmeter-timescaledb-1.8.1-all.jar`) from the [GitHub Releases](https://github.com/perfana/perfana-jmeter-timescaledb/releases) page and copy it to JMeter's `lib/ext` directory.
 
 ## Distribution
 

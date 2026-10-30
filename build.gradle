@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'io.perfana'
-version = '1.8.0'
+version = '1.8.1'
 description = 'Perfana JMeter TimescaleDB Backend Listener'
 
 repositories {
